@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Workspace — keep folder structure but ignore contents
+workspace/input/*
+!workspace/input/.gitkeep
+workspace/output/*
+!workspace/output/.gitkeep
+workspace/temp/
+
+# Google OAuth credentials (rename credentials.sample.json and fill in your keys)
+credentials.json
