@@ -35,14 +35,14 @@ workspace/output/                ← All output files land here
 
 ## File Map
 
-| Domain         | Directive                          | Orchestrator                           | Executor(s)                                    |
-|----------------|------------------------------------|----------------------------------------|------------------------------------------------|
-| Video cut      | directives/video/auto-edit.md      | orchestrators/video/auto-edit.md       | executors/video/transcribe.py, apply_cuts.py   |
-| Research       | directives/research/topic.md       | orchestrators/research/pipeline.md     | executors/research/fetch_transcript.py         |
-| Thumbnail      | directives/thumbnail/generate.md   | orchestrators/thumbnail/generate.md    | executors/thumbnail/generate_thumbnail.py      |
-| Publishing     | directives/publishing/post.md      | orchestrators/publishing/pipeline.md   | executors/publishing/upload_video.py           |
+| Domain         | Command  | Directive                          | Orchestrator                           | Executor(s)                                    |
+|----------------|----------|------------------------------------|----------------------------------------|------------------------------------------------|
+| Video cut      | /cut     | directives/video/auto-edit.md      | orchestrators/video/auto-edit.md       | executors/video/transcribe.py, apply_cuts.py, clean_audio.py |
+| Write          | /write   | directives/research/topic.md       | orchestrators/research/pipeline.md     | executors/research/fetch_transcript.py         |
+| Thumbnail      | /thumbnail | directives/thumbnail/generate.md | orchestrators/thumbnail/generate.md    | executors/thumbnail/generate_thumbnail.py      |
+| Publishing     | /post    | directives/publishing/post.md      | orchestrators/publishing/pipeline.md   | executors/publishing/upload_video.py           |
 
-_(Research, Thumbnail, Publishing are stubs — not yet implemented)_
+_(Thumbnail, Publishing are stubs — not yet implemented)_
 
 ## Workspace Convention
 | Directory          | Purpose                                      |
@@ -62,6 +62,14 @@ Temp files can be cleared after a pipeline completes. Never delete input/ or out
 ## Agent Personas
 For domain-specific sessions, load the relevant persona from `agents/`:
 - `agents/video-editor.md` — for video editing sessions
+- `agents/research-writer.md` — for research and script writing sessions
+
+## Dependencies
+- `ffmpeg` 6.0+ (brew install ffmpeg) — must include `arnndn` filter (default in Homebrew builds)
+- `openai-whisper` (pip install openai-whisper) — for transcription
+- Python 3.9+
+- `yt-dlp` (brew install yt-dlp) — for /write pipeline
+- **RNNoise model** — auto-downloaded on first `clean_audio.py` run (~3MB, cached to `~/.cache/clean_audio/cb.rnnn`)
 
 ## Error Handling Philosophy
 1. Validate before executing — catch bad inputs before touching files

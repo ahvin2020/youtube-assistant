@@ -45,6 +45,7 @@ from __future__ import annotations
 import sys
 import json
 import re
+import time
 import shutil
 import subprocess
 import tempfile
@@ -257,6 +258,8 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
     Full pipeline: extract audio from video, run Whisper, save transcript JSON.
     Audio is pre-split at silence boundaries so mid-take restarts are captured.
     """
+    t_start = time.time()
+
     if not Path(video_path).exists():
         return {"status": "error", "error": f"Video file not found: {video_path}"}
 
@@ -383,8 +386,10 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
     with open(output_json, 'w') as f:
         json.dump(transcript, f, indent=2)
 
+    elapsed = round(time.time() - t_start, 1)
     print(f"Transcript saved to: {output_json}", file=sys.stderr)
     print(f"  Segments: {len(transcript['segments'])}", file=sys.stderr)
+    print(f"  Elapsed:  {elapsed}s", file=sys.stderr)
 
     return {
         "status": "success",
@@ -393,6 +398,7 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
         "duration_seconds": duration,
         "language": transcript["language"],
         "segment_count": len(transcript["segments"]),
+        "elapsed_seconds": elapsed,
     }
 
 

@@ -1,18 +1,16 @@
-# Directive: Auto-Edit (Script Mode or Script-Free Mode)
+# Directive: Auto-Edit (Retake Detection)
 
 ## Purpose
 You are an expert video editor. Your job is to detect errors and retakes in a raw video
 and produce a clean edit ready for post-production.
 
-Two modes are supported:
-- **Script Mode** — a script is provided as ground truth for content (`workspace/temp/<source_stem>/script.txt` exists)
-- **Script-Free Mode** — no script; detect retakes from transcript patterns alone
+Retakes are detected from transcript patterns alone — no script is used.
 
 ---
 
-## Script-Free Mode — How to Detect Retakes Without a Script
+## How to Detect Retakes
 
-When no script is available, identify bad takes by looking for these patterns in the transcript:
+Identify bad takes by looking for these patterns in the transcript:
 
 1. **Explicit restart cues** — presenter says "ok", "wait", "let me redo that", "from the top",
    "actually", "no wait", or similar, then repeats what they just said → remove all but the final delivery
@@ -25,77 +23,33 @@ When no script is available, identify bad takes by looking for these patterns in
 4. **Off-topic tangents** — extended speech clearly unrelated to the surrounding content
    (e.g. talking to someone off-camera, personal remarks mid-take) → remove
 
-In Script-Free Mode, the transcript itself is the guide. Work through it chronologically.
-Group obviously related content into logical sections, then apply the same retake-detection
+The transcript itself is the guide. Work through it chronologically.
+Group obviously related content into logical sections, then apply the retake-detection
 rules: keep only the final clean delivery of each section.
-
----
-
-## Script Mode — How to Match
-
-When a script is provided, it is the ground truth for content — not exact wording.
-
-**The presenter will paraphrase, simplify, or naturally adjust the script's wording.**
-This is normal and expected. Match by MEANING, not by literal words.
-
-Examples of valid matches:
-- Script: "I'll demonstrate how this works step by step"
-  Spoken: "let me show you exactly how to do this"  → MATCH ✓
-
-Examples of non-matches (should be removed):
-- Script says nothing about a personal anecdote the presenter spontaneously tells → REMOVE
-- Presenter says the exact same intro paragraph twice → keep ONLY the second delivery
 
 ---
 
 ## Definitions
 
-**Successful take**: The final, clean delivery of a script section where the presenter
-conveys the meaning of that section without restarting or breaking off.
+**Successful take**: The final, clean delivery of a section where the presenter
+conveys the content without restarting or breaking off.
 
 **Bad take / retake**: Any of the following:
 - The presenter restarts a section they already started ("wait, let me redo that", "ok from the top")
 - The presenter stumbles mid-sentence and then restarts the same sentence
-- The presenter says content that has no semantic relationship to any section of the script (off-topic tangent, ad-lib commentary not in the script)
+- Off-topic tangent, ad-lib commentary unrelated to surrounding content
 - A half-finished sentence immediately followed by the same sentence re-delivered cleanly
 
 ---
 
-## Matching Rules
+## Detection Rules
 
-1. Work through the script **section by section** (paragraph by paragraph)
-2. For each script section, find **all spoken attempts** in the transcript
-3. Keep **only the FINAL attempt** of each script section
+1. Work through the transcript **section by section** (group related content into logical sections)
+2. For each section, find **all spoken attempts**
+3. Keep **only the FINAL attempt** of each section
 4. Any earlier attempts at the same section are **removed**
-5. Any speech not related to any script section is **removed**
+5. Any speech not related to any surrounding content is **removed**
 6. Preserve the **chronological order** of kept segments — do not reorder
-
----
-
-## What to Ignore in the Script
-
-Scripts often contain elements the presenter never says aloud. When matching transcript
-to script, **ignore** the following completely — do not expect them to appear in the audio:
-
-- **Headers / section titles** (e.g. `# Intro`, `## Step 1`, bold/underlined headings)
-- **Hyperlinks** — both display text and URLs (e.g. `[click here](https://...)`, bare URLs)
-- **Footnotes and endnotes** (e.g. `[1]`, `^1`, footnote text at the bottom)
-- **References / citations** (e.g. `(Smith, 2023)`, `[source]`, bibliography entries)
-- **Stage directions or production notes** written in brackets or parentheses (e.g. `[cut to demo]`, `(show screen)`)
-- **Timestamps or slide markers** (e.g. `[0:30]`, `Slide 3:`)
-
-Only the **spoken prose** — the sentences the presenter delivers to camera — should be
-used for transcript alignment. Everything else is structural metadata.
-
----
-
-## Script Input Handling
-
-- **Google Doc URL**: Convert the URL to export format before fetching:
-  - From: `https://docs.google.com/document/d/<ID>/edit`
-  - To:   `https://docs.google.com/document/d/<ID>/export?format=txt`
-  - The doc must be shared as "Anyone with the link can view"
-- **Pasted text**: Use as-is, write to `workspace/temp/<source_stem>/script.txt`
 
 ---
 
@@ -130,7 +84,10 @@ transcript's `segments[].start` and `segments[].end` values.
 `apply_cuts.py` automatically applies:
 - **0.1s start padding** — subtracts 0.1s from each segment start to prevent clipping
   the first phoneme (Whisper timestamps have no pre-roll buffer).
-- **0.15s end padding** — adds 0.15s to each segment end so speech trails off naturally.
+- **0.1s end padding** — adds 0.1s to each segment end so speech trails off naturally.
+- **Adjacent-segment clamping** — when padding would cause two consecutive segments
+  to overlap, both are clamped back to the original unpadded boundary so no audio
+  is duplicated in the output.
 
 Use raw Whisper timestamps in `cut_spec.json`. Do not pre-adjust for padding.
 
@@ -142,7 +99,7 @@ within that range**. Do not treat merged blocks as automatically clean.
 **Check each segment inside a kept range for:**
 
 1. **False starts of the next sentence** — a segment whose text begins the following
-   script sentence but does not finish it (e.g. "and the allocated" before "and the
+   sentence but does not finish it (e.g. "and the allocated" before "and the
    allocated gold is fully insured..."). These are stumbles; remove them by splitting
    the kept range so the stumble gap falls between two separate keep_segments.
 
@@ -178,29 +135,82 @@ NOT:
 - [ ] Every transcript segment within each kept range has been individually examined
 - [ ] No keep_segment bridges a silence gap > 0.5s (split at the gap instead)
 
-## User Review (Mandatory)
+## User Review (Auto-Accept)
 
-Before calling the executor, ALWAYS show the user:
+Before calling the executor, show the user an informational summary:
 
 1. A table of segments to be REMOVED with columns: Start | End | Duration | Reason
 2. A summary: "X retakes found, Y seconds removed"
-3. Ask: **"Proceed with these edits? (yes / no / adjust)"**
 
-If the user says "adjust", ask what they want to change and update the cut_spec.json accordingly.
-If no retakes are detected, tell the user and ask if they want to proceed without edits.
+Then **proceed immediately** to apply cuts — do not wait for confirmation.
+
+If no retakes are detected, tell the user and proceed without edits (produce unchanged output).
 
 ## Error Handling
 
 - If the transcript file is missing: stop and tell the user to run the transcription step first
-- If the script has no clear sections (just one block of text): treat the whole script as one section
 - If a segment's timestamps can't be determined precisely: use the nearest Whisper segment boundary and note the uncertainty to the user
 - If the source video file does not exist: stop immediately, do not call any executor
 
+## Audio Cleanup (Pre-Processing)
+
+When the user opts for audio cleanup (Step 0 in the orchestrator):
+
+- **Auto-detect preset** — run `--analyze` first and use the `recommended_preset` from the output
+- `voice` — suitable for most talking-head recordings (moderate denoise)
+- `light` — recording environment is already good (minor level tweaks only)
+- `heavy` — significant background noise or reverb (aggressive denoise)
+- The user can override the auto-detected preset by explicitly requesting one
+- The cleaned file goes to `workspace/temp/<STEM>/`, NOT `workspace/output/`
+- The original input file is **NEVER modified**
+- All subsequent pipeline steps (transcription, cuts) use the cleaned file as the source
+- The cleaned audio is an intermediate artifact — the final output from `apply_cuts.py` inherits the cleaned audio
+
+### Pipeline Stages
+The executor uses a multi-stage pipeline:
+1. Extract audio to 48kHz mono WAV
+2. Process: highpass → arnndn (RNNoise ML denoiser) → deesser → compressor → limiter
+3. Two-pass loudnorm: measure loudness, then apply linear normalization
+4. Mux processed audio back with original video (`-c:v copy`)
+
+### Denoise Backends
+- **arnndn** (default) — RNNoise neural model built into ffmpeg. Auto-downloads a 3MB model on first use to `~/.cache/clean_audio/cb.rnnn`
+- **afftdn** (fallback) — basic FFT denoiser. Used automatically if arnndn model download fails
+- Override with `--denoise-backend arnndn|afftdn`
+
+### Analyze Mode
+Run `--analyze` to inspect audio before cleaning:
+```
+python3 executors/video/clean_audio.py --analyze <input>
+```
+Returns loudness measurements and a recommended preset without processing the file.
+
+---
+
+## Whisper Transcription Artefacts
+
+Whisper frequently garbles **colloquial, dialect, or code-switched speech** — especially
+Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "alamak",
+"can or not", etc.  These appear as nonsense text (e.g. "Shion no a go so much" for
+"wah, sure or not").
+
+**Before classifying any segment as "garbled / off-topic":**
+
+1. Consider context — if it immediately follows a natural reaction (e.g. "wow"), it is
+   almost certainly a continuation of that reaction, not random noise.
+2. Short segments (< 3 seconds) with nonsense text between two kept segments are more
+   likely misheard colloquial speech than genuine off-topic content.
+3. When in doubt, **keep the segment** — a few extra seconds of genuine speech is far
+   less damaging than cutting off the presenter mid-reaction.
+
+---
+
 ## What NOT to Do
 
-- Do not call `apply_cuts.py` before getting user confirmation
+- Show the cut plan for informational purposes before calling `apply_cuts.py`, but do not wait for confirmation
 - Do not reorder segments — the output must maintain the original recording order
 - Do not add, create, or generate video content — only extract and remove
 - Do not match based on filler words alone ("um", "uh", "so") — look at semantic content
 - **Do not merge transcript segments across a gap > 0.5s into a single keep_segment** — always split at the gap
 - **Do not assume a silence gap within a kept block is empty** — the transcriber (Whisper) can miss brief utterances
+- **Do not classify colloquial/dialect speech as garbled** — Whisper often misheards Singlish; see "Whisper Transcription Artefacts" above
