@@ -1,8 +1,13 @@
 # Orchestrator: Auto-Edit Pipeline
 
 This orchestrator coordinates the pipeline to automatically detect and remove
-errors and retakes from a raw video. Retakes are detected from transcript
-patterns alone.
+errors and retakes from a raw video.
+
+Two modes are supported:
+- **Retake-Only** (`script_mode = false`): retakes detected from transcript patterns alone
+- **Script-Guided** (`script_mode = true`): semantic alignment against a user-provided script
+
+The mode is set by the `/cut` command based on user input. It affects only Step 2.
 
 Follow every step in order. Do not skip steps. Do not proceed to the next step if
 the current step produces an error.
@@ -16,6 +21,7 @@ Before starting, verify:
 - [ ] Derive `STEM` = source filename without extension (e.g. `IMG_0171` from `IMG_0171.MOV`)
 - [ ] `TEMP_DIR` = `workspace/temp/<STEM>/` — create if not: `mkdir -p workspace/temp/<STEM>`
 - [ ] `workspace/output/` directory exists (create if not: `mkdir -p workspace/output`)
+- [ ] If `script_mode = true`: verify `workspace/temp/<STEM>/script.txt` exists and is non-empty
 
 Use `TEMP_DIR` for all temp file paths throughout this pipeline. This keeps each video's
 intermediate files isolated so multiple videos can be processed concurrently without conflict.
@@ -29,10 +35,12 @@ If source file is not found: stop immediately.
 The user's audio cleanup preference was already collected during the `/cut` command setup.
 Do **not** ask again.
 
-### If audio cleanup is enabled — analyze, then run cleanup + transcription in parallel
+### If audio cleanup is enabled — analyze, then run cleanup in background while transcription proceeds
 
 Audio cleanup does not alter timing, so the raw file's Whisper timestamps align perfectly
-with the cleaned file. Exploit this by running cleanup and transcription concurrently.
+with the cleaned file. The cleaned file is only needed at Step 4 (apply cuts), not for
+transcription or semantic alignment. Exploit this by running cleanup in the background
+while transcription and alignment proceed in the foreground.
 
 #### Step 0a — Analyze audio (fast, ~2s)
 
@@ -47,35 +55,28 @@ user explicitly requested a specific preset (e.g. `--preset light`).
 
 Report: "Audio analysis: measured X LUFS, recommended preset: Y"
 
-#### Step 0b — Launch cleanup + transcription in parallel
+#### Step 0b — Launch cleanup (background) + transcription (foreground)
 
-**Launch both commands at the same time** (use `run_in_background` for one or both):
+**Launch cleanup in the background**, then run transcription in the foreground:
 
 ```bash
 # Background: clean the audio (use the analyzed preset)
+# Use run_in_background=true — we won't need the result until Step 4
 python3 executors/video/clean_audio.py "workspace/input/<source_file>" "workspace/temp/<STEM>/<STEM>_cleaned<ext>" --preset <recommended_preset>
 
-# Foreground (or also background): transcribe the RAW file
-python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small
+# Foreground: transcribe the RAW file
+# Use --workers 2 (not 4) because ffmpeg cleanup is consuming cores concurrently
+python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small --workers 2
 ```
 
-**Wait for both to finish** before proceeding.
-
-On cleanup success:
-- Report: "Audio cleaned. Preset: \<preset\>. Output: workspace/temp/\<STEM\>/\<STEM\>_cleaned\<ext\>"
-- **Update `source_file`** for the cut_spec and apply_cuts steps to use the cleaned file:
-  `source_file = workspace/temp/<STEM>/<STEM>_cleaned<ext>`
-
-On cleanup failure: show the full error JSON. Common fixes:
-- `ffmpeg not found` → `brew install ffmpeg`
+**When transcription finishes, proceed immediately to Step 2** (alignment).
+Do NOT wait for cleanup to finish — it runs in the background and is only needed at Step 4.
 
 On transcription success: report "Transcription complete. X segments found."
 
 On transcription failure: show the full error JSON and stop. Common fixes:
 - `openai-whisper not installed` → `pip install openai-whisper`
 - `ffmpeg not found` → `brew install ffmpeg`
-
-If either task fails, stop the pipeline.
 
 The user may also request a different cleanup preset (`light`, `heavy`) or custom options
 (e.g. `--no-eq`, `--target-lufs -16`). Pass those through to the executor, overriding
@@ -84,7 +85,8 @@ the analyzer's recommendation.
 ### If audio cleanup is skipped — transcribe only
 
 ```bash
-python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small
+# All cores available — use more workers for faster transcription
+python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small --workers 4
 ```
 
 If `workspace/temp/<STEM>/transcript.json` already exists from a previous run, overwrite it —
@@ -100,17 +102,35 @@ On failure: show the full error JSON and stop.
 
 ## Step 2 — Analyze and Build Cut Spec (Claude's Intelligence Step)
 
-Read `directives/video/auto-edit.md` and apply the retake-detection rules.
+Read `directives/video/auto-edit.md` and apply the rules for the active mode.
+
+### If `script_mode = false` (Retake-Only)
 
 Inputs:
 - `workspace/temp/<STEM>/transcript.json`
 
-Output:
-- `workspace/temp/<STEM>/cut_spec.json`
-
+Apply the **Mode: Retake-Only** rules from the directive.
 Work through the transcript chronologically. Group related content into logical
 sections. For each section, find all spoken attempts and keep only the final
 delivery. Remove all earlier attempts and any off-topic content.
+
+### If `script_mode = true` (Script-Guided)
+
+Inputs:
+- `workspace/temp/<STEM>/transcript.json`
+- `workspace/temp/<STEM>/script.txt`
+
+Apply the **Mode: Script-Guided** rules from the directive:
+1. Parse the script — strip non-spoken elements (headers, URLs, citations, stage
+   directions, metadata). Number the remaining spoken sections.
+2. For each script section, find all transcript segments that match semantically.
+3. For each section with multiple matches, keep only the final take.
+4. Remove all off-script content (except brief natural transitions).
+5. Flag any script sections with no matching delivery.
+
+### Output (both modes)
+
+- `workspace/temp/<STEM>/cut_spec.json`
 
 ### ⚠️ Output Token Budget — CRITICAL
 
@@ -121,9 +141,11 @@ Instead:
 1. Do your analysis silently (internal reasoning only)
 2. Write the result directly to `workspace/temp/<STEM>/cut_spec.json` using the **Write file tool**
 3. In the chat, report only a brief summary:
-   - Number of retakes / bad takes found
-   - Total duration to be removed
-   - Any segments you were uncertain about (flag by timestamp only)
+   - **Retake-Only**: Number of retakes / bad takes found, total duration to be removed,
+     any segments you were uncertain about (flag by timestamp only)
+   - **Script-Guided**: Number of script sections matched vs unmatched, any unmatched
+     sections (with first few words), number of retakes within matched sections,
+     total off-script content removed, total duration to be removed
 
 Keep all JSON generation inside the Write tool call — never in the response text.
 
@@ -176,11 +198,36 @@ SEGMENTS TO KEEP:
 Auto-accepting cut plan — proceeding to apply cuts.
 ```
 
+If `script_mode = true`, also show:
+
+```
+SCRIPT COVERAGE:
+  Matched:   8/10 sections
+  Unmatched: 2 sections
+    - Section 4: "The third risk factor is..."
+    - Section 9: "In conclusion, the data shows..."
+```
+
 Do **not** pause for user confirmation. Proceed directly to Step 4.
 
 ---
 
 ## Step 4 — Apply Cuts
+
+### If audio cleanup was launched in background — wait for it now
+
+Before applying cuts, check that the background cleanup task has finished.
+Use `TaskOutput` to collect the result.
+
+On cleanup success:
+- Report: "Audio cleaned. Preset: \<preset\>. Output: workspace/temp/\<STEM\>/\<STEM\>_cleaned\<ext\>"
+- **Update `source_file`** for apply_cuts to use the cleaned file:
+  `source_file = workspace/temp/<STEM>/<STEM>_cleaned<ext>`
+
+On cleanup failure: show the full error JSON and stop. Common fixes:
+- `ffmpeg not found` → `brew install ffmpeg`
+
+### Apply cuts
 
 All outputs go into a per-video folder: `workspace/output/<STEM>/`.
 Create it before running: `mkdir -p workspace/output/<STEM>`.
@@ -262,8 +309,8 @@ Timing:
 ```
 
 If audio cleanup was skipped, omit that line. The "Total" is the sum of all
-executor times (they may overlap if cleanup + transcription ran in parallel,
-so wall-clock time may be shorter — note this if relevant).
+executor times (cleanup overlaps with transcription + alignment, so wall-clock
+time may be shorter — note this if relevant).
 
 ---
 

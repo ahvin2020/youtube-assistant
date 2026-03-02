@@ -7,7 +7,7 @@ Extracts audio first (via ffmpeg), then runs Whisper on the audio track.
 
 Usage:
     python3 executors/video/transcribe.py <video_file> <output_json>
-    python3 executors/video/transcribe.py <video_file> <output_json> --model small
+    python3 executors/video/transcribe.py <video_file> <output_json> --model small --workers 4
     python3 executors/video/transcribe.py --help
 
 Arguments:
@@ -15,6 +15,9 @@ Arguments:
     output_json   Path where the transcript JSON will be written
     --model       Whisper model size: tiny, base, small, medium, large (default: base)
     --language    Language code, e.g. 'en' (default: en)
+    --workers     Number of parallel transcription workers (default: 2, max: cpu_count capped at 4)
+                  Each worker loads its own model copy — memory scales with workers.
+                  Use 1 to disable parallelism.
 
 Installation:
     pip install openai-whisper
@@ -50,6 +53,7 @@ import shutil
 import subprocess
 import tempfile
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 # Silence detection tuning — used during audio pre-split
@@ -234,6 +238,59 @@ def transcribe_audio(audio_path: str, model_name: str, language: str, model=None
     }
 
 
+def _transcribe_worker(batch: list, model_name: str, language: str) -> list:
+    """Worker function for parallel transcription (runs in a separate process).
+
+    Each worker loads its own Whisper model copy and transcribes its batch of
+    segment WAVs sequentially.  Returns a list of result dicts, one per segment,
+    in the same order as the input batch.
+
+    batch items: {"index": int, "seg_start": float, "wav_path": str}
+    """
+    import whisper as _whisper
+
+    model = _whisper.load_model(model_name)
+
+    transcribe_kwargs = {
+        "verbose": False,
+        "condition_on_previous_text": False,
+    }
+    if language:
+        transcribe_kwargs["language"] = language
+
+    results = []
+    for item in batch:
+        try:
+            raw = model.transcribe(item["wav_path"], **transcribe_kwargs)
+            segments = []
+            for seg in raw.get("segments", []):
+                segments.append({
+                    "start": round(seg.get("start", 0.0) + item["seg_start"], 3),
+                    "end":   round(seg.get("end", 0.0)   + item["seg_start"], 3),
+                    "text":  seg.get("text", "").strip(),
+                })
+            results.append({
+                "index": item["index"],
+                "status": "success",
+                "segments": segments,
+            })
+        except Exception as e:
+            results.append({
+                "index": item["index"],
+                "status": "error",
+                "error": str(e),
+            })
+    return results
+
+
+def _split_into_batches(items: list, n_batches: int) -> list:
+    """Split a list into n roughly equal batches (round-robin for balance)."""
+    batches = [[] for _ in range(n_batches)]
+    for i, item in enumerate(items):
+        batches[i % n_batches].append(item)
+    return [b for b in batches if b]
+
+
 def get_video_duration(video_path: str) -> float:
     """Get video duration in seconds using ffprobe."""
     cmd = [
@@ -253,10 +310,12 @@ def get_video_duration(video_path: str) -> float:
         return 0.0
 
 
-def transcribe_video(video_path: str, output_json: str, model_name: str = "base", language: str = "en") -> dict:
+def transcribe_video(video_path: str, output_json: str, model_name: str = "base",
+                      language: str = "en", workers: int = 2) -> dict:
     """
     Full pipeline: extract audio from video, run Whisper, save transcript JSON.
     Audio is pre-split at silence boundaries so mid-take restarts are captured.
+    When workers > 1, speech segments are transcribed in parallel across processes.
     """
     t_start = time.time()
 
@@ -306,16 +365,18 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
 
         else:
             # Pre-split path: transcribe each speech segment independently
+            actual_workers = min(workers, len(speech_segments))
+            parallel_label = f" across {actual_workers} workers" if actual_workers > 1 else ""
             print(
-                f"Pre-splitting into {len(speech_segments)} speech segment(s) at silence boundaries.",
+                f"Pre-splitting into {len(speech_segments)} speech segment(s) "
+                f"at silence boundaries{parallel_label}.",
                 file=sys.stderr
             )
 
             seg_temp_dir = tempfile.mkdtemp(prefix="transcribe_segs_")
             try:
-                all_segments = []
-                global_seg_id = 0
-
+                # Phase A — Extract all segment WAVs (sequential, fast I/O)
+                batch_items = []
                 for i, (seg_start, seg_end) in enumerate(speech_segments):
                     seg_wav = os.path.join(seg_temp_dir, f"seg_{i:04d}.wav")
 
@@ -328,29 +389,83 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
                         )
                         continue
 
-                    t_result = transcribe_audio(seg_wav, model_name, language, model=loaded_model)
-                    if t_result["status"] != "success":
-                        print(
-                            f"[warn] Whisper failed on segment {i} [{seg_start}s-{seg_end}s], skipping: "
-                            f"{t_result.get('error', '')}",
-                            file=sys.stderr
-                        )
-                        if os.path.exists(seg_wav):
-                            os.unlink(seg_wav)
-                        continue
+                    batch_items.append({
+                        "index": i,
+                        "seg_start": seg_start,
+                        "wav_path": seg_wav,
+                    })
 
-                    # Offset timestamps back to original video timeline
-                    for seg in t_result["segments"]:
-                        all_segments.append({
-                            "id": global_seg_id,
-                            "start": round(seg["start"] + seg_start, 3),
-                            "end":   round(seg["end"]   + seg_start, 3),
-                            "text":  seg["text"]
-                        })
-                        global_seg_id += 1
+                if not batch_items:
+                    return {
+                        "status": "error",
+                        "error": "All speech segments failed to extract. Check ffmpeg installation."
+                    }
 
-                    if os.path.exists(seg_wav):
-                        os.unlink(seg_wav)
+                # Phase B — Transcribe (parallel or sequential)
+                all_segments = []
+
+                if actual_workers <= 1:
+                    # Sequential path — reuse already-loaded model (no multiprocessing overhead)
+                    transcribe_kwargs = {
+                        "verbose": False,
+                        "condition_on_previous_text": False,
+                    }
+                    if language:
+                        transcribe_kwargs["language"] = language
+
+                    for item in batch_items:
+                        print(f"  [{item['index']+1}/{len(speech_segments)}] Transcribing...", file=sys.stderr)
+                        try:
+                            raw = loaded_model.transcribe(item["wav_path"], **transcribe_kwargs)
+                            for seg in raw.get("segments", []):
+                                all_segments.append({
+                                    "start": round(seg.get("start", 0.0) + item["seg_start"], 3),
+                                    "end":   round(seg.get("end", 0.0)   + item["seg_start"], 3),
+                                    "text":  seg.get("text", "").strip(),
+                                })
+                        except Exception as e:
+                            print(f"[warn] Whisper failed on segment {item['index']}, skipping: {e}",
+                                  file=sys.stderr)
+                else:
+                    # Parallel path — distribute across worker processes
+                    del loaded_model  # free memory before forking workers
+                    batches = _split_into_batches(batch_items, actual_workers)
+                    print(f"  Dispatching {len(batch_items)} segments to {len(batches)} workers...",
+                          file=sys.stderr)
+
+                    worker_results = []
+                    with ProcessPoolExecutor(max_workers=len(batches)) as pool:
+                        futures = {
+                            pool.submit(_transcribe_worker, batch, model_name, language): idx
+                            for idx, batch in enumerate(batches)
+                        }
+                        for future in as_completed(futures):
+                            worker_idx = futures[future]
+                            try:
+                                results = future.result()
+                                worker_results.extend(results)
+                                done_count = len(worker_results)
+                                print(f"  Worker {worker_idx+1} done — "
+                                      f"{done_count}/{len(batch_items)} segments transcribed",
+                                      file=sys.stderr)
+                            except Exception as e:
+                                print(f"[warn] Worker {worker_idx+1} failed: {e}", file=sys.stderr)
+
+                    # Phase C — Merge results in original segment order
+                    worker_results.sort(key=lambda r: r["index"])
+                    for r in worker_results:
+                        if r["status"] == "success":
+                            all_segments.extend(r["segments"])
+                        else:
+                            print(f"[warn] Segment {r['index']} failed: {r.get('error', '')}",
+                                  file=sys.stderr)
+
+                # Clean up extracted WAVs
+                for item in batch_items:
+                    try:
+                        os.unlink(item["wav_path"])
+                    except OSError:
+                        pass
 
             finally:
                 shutil.rmtree(seg_temp_dir, ignore_errors=True)
@@ -360,6 +475,9 @@ def transcribe_video(video_path: str, output_json: str, model_name: str = "base"
                     "status": "error",
                     "error": "All speech segments failed to transcribe. Check ffmpeg and Whisper installation."
                 }
+
+            # Sort by start time to ensure chronological order
+            all_segments.sort(key=lambda s: s["start"])
 
             transcribe_result = {
                 "status": "success",
@@ -420,6 +538,7 @@ def main():
     output_json = args[1]
     model_name = "base"
     language = "en"
+    workers = 2
 
     i = 2
     while i < len(args):
@@ -429,10 +548,16 @@ def main():
         elif args[i] == '--language' and i + 1 < len(args):
             language = args[i + 1]
             i += 2
+        elif args[i] == '--workers' and i + 1 < len(args):
+            try:
+                workers = max(1, min(int(args[i + 1]), os.cpu_count() or 4, 4))
+            except ValueError:
+                workers = 2
+            i += 2
         else:
             i += 1
 
-    result = transcribe_video(video_path, output_json, model_name, language)
+    result = transcribe_video(video_path, output_json, model_name, language, workers=workers)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result['status'] == 'success' else 1)
 

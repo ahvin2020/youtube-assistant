@@ -31,7 +31,7 @@ Presets:
 
 Pipeline Stages:
     1. Extract audio to 48kHz mono WAV (temp)
-    2. Apply filters: highpass → arnndn (RNNoise) → deesser → compressor → limiter
+    2. Apply filters: highpass → arnndn (RNNoise) → deesser → compressor → gate → limiter
     3. Loudnorm pass 1: measure loudness stats
     4. Loudnorm pass 2: apply linear normalization with measured values
     5. Mux processed audio back with original video stream (if present)
@@ -136,6 +136,11 @@ PRESETS = {
         "compressor_attack": 30,
         "compressor_release": 300,
         "compressor_knee": 6,
+        "gate": False,
+        "gate_threshold": 0.006,
+        "gate_ratio": 2,
+        "gate_attack": 5,
+        "gate_release": 100,
         "limiter": False,
         "limiter_limit": 0.95,
         "limiter_attack": 5,
@@ -154,6 +159,11 @@ PRESETS = {
         "compressor_attack": 20,
         "compressor_release": 200,
         "compressor_knee": 4,
+        "gate": True,
+        "gate_threshold": 0.006,
+        "gate_ratio": 2,
+        "gate_attack": 5,
+        "gate_release": 100,
         "limiter": True,
         "limiter_limit": 0.95,
         "limiter_attack": 5,
@@ -162,7 +172,7 @@ PRESETS = {
     "heavy": {
         "highpass_freq": 100,
         "denoise": True,
-        "arnndn_mix": 0.8,
+        "arnndn_mix": 1.0,
         "deesser": True,
         "deesser_intensity": 0.6,
         "deesser_max": 0.6,
@@ -172,6 +182,11 @@ PRESETS = {
         "compressor_attack": 15,
         "compressor_release": 150,
         "compressor_knee": 3,
+        "gate": True,
+        "gate_threshold": 0.01,
+        "gate_ratio": 3,
+        "gate_attack": 5,
+        "gate_release": 80,
         "limiter": True,
         "limiter_limit": 0.9,
         "limiter_attack": 5,
@@ -295,6 +310,15 @@ def build_processing_chain(preset_name: str, denoise_backend: str,
             f"acompressor=threshold={t}dB:ratio={r}:attack={a}:release={rel}:knee={k}"
         )
         names.append("acompressor")
+
+    # 4b. Noise gate (mutes residual noise between phrases)
+    if preset.get("gate") and not no_compress:
+        gt = preset["gate_threshold"]
+        gr = preset["gate_ratio"]
+        ga = preset["gate_attack"]
+        grel = preset["gate_release"]
+        filters.append(f"agate=threshold={gt}:ratio={gr}:attack={ga}:release={grel}")
+        names.append("agate")
 
     # 5. Limiter
     if preset["limiter"] and not no_compress:

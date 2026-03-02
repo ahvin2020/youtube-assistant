@@ -1,14 +1,23 @@
-# Directive: Auto-Edit (Retake Detection)
+# Directive: Auto-Edit (Retake Detection + Script Alignment)
 
 ## Purpose
 You are an expert video editor. Your job is to detect errors and retakes in a raw video
 and produce a clean edit ready for post-production.
 
-Retakes are detected from transcript patterns alone — no script is used.
+This directive supports two modes:
+- **Retake-Only Mode** (`script_mode = false`) — no script provided; retakes detected from transcript patterns alone
+- **Script-Guided Mode** (`script_mode = true`) — user provides a script; semantic alignment determines what to keep
+
+The orchestrator sets the mode. Apply only the rules for the active mode, plus all
+shared rules (output format, validation, audio cleanup, Whisper artefacts).
 
 ---
 
-## How to Detect Retakes
+## Mode: Retake-Only (no script provided)
+
+> Apply this section when `script_mode = false`.
+
+### How to Detect Retakes
 
 Identify bad takes by looking for these patterns in the transcript:
 
@@ -27,9 +36,7 @@ The transcript itself is the guide. Work through it chronologically.
 Group obviously related content into logical sections, then apply the retake-detection
 rules: keep only the final clean delivery of each section.
 
----
-
-## Definitions
+### Definitions
 
 **Successful take**: The final, clean delivery of a section where the presenter
 conveys the content without restarting or breaking off.
@@ -40,9 +47,7 @@ conveys the content without restarting or breaking off.
 - Off-topic tangent, ad-lib commentary unrelated to surrounding content
 - A half-finished sentence immediately followed by the same sentence re-delivered cleanly
 
----
-
-## Detection Rules
+### Detection Rules
 
 1. Work through the transcript **section by section** (group related content into logical sections)
 2. For each section, find **all spoken attempts**
@@ -53,7 +58,96 @@ conveys the content without restarting or breaking off.
 
 ---
 
-## Output Format
+## Mode: Script-Guided (script provided)
+
+> Apply this section when `script_mode = true`.
+> The script file is at `workspace/temp/<STEM>/script.txt`.
+
+### Step 1 — Parse the Script Into Spoken Sections
+
+Read the script and break it into numbered spoken sections. A "section" is a
+paragraph or group of sentences that form a single complete idea.
+
+**Non-spoken content to ignore**: The script may contain elements the presenter does
+not say aloud. Strip these before matching:
+
+1. **Markdown headers** — lines starting with `#`, `##`, `###`, etc.
+   (e.g. `## Why Gold is Safe`). These are structural labels, not narration.
+2. **URLs and hyperlinks** — bare URLs (`https://...`) or markdown links
+   (`[text](url)`). The presenter does not read URLs aloud.
+3. **Source citations and references** — lines like `Source: Bloomberg`,
+   `[1] https://...`, `(Reuters, 2025)`, or any bracketed reference notation.
+4. **Stage directions and notes** — text in brackets or parentheses that describe
+   actions rather than speech: `[show chart]`, `(pause here)`, `[B-roll: city skyline]`.
+5. **Metadata lines** — lines like `Word count: 1500`, `Format: long-form`,
+   `Based on: outline.md`, `Tone: casual`.
+6. **Blank lines and horizontal rules** — `---`, `***`, empty lines.
+
+**What remains after stripping** is the spoken narration. Number each resulting
+paragraph or logical group as Section 1, Section 2, etc.
+
+### Step 2 — Semantic Matching (NOT Literal)
+
+For each script section, scan the transcript chronologically to find all spoken attempts.
+
+**Matching rule**: A transcript segment MATCHES a script section if the spoken words
+convey the **same meaning**, even if the exact words differ. Presenters frequently
+paraphrase their own script — this is expected and normal.
+
+Good matches:
+- Script: "The biggest risk with gold is storage and insurance"
+  Spoken: "Now the main risk you face with gold, right, is you gotta store it and insure it" → MATCH
+
+- Script: "DCA outperforms lump sum 30% of the time"
+  Spoken: "Dollar cost averaging actually beats lump sum about 30 percent of the time" → MATCH
+
+Not a match:
+- Script says nothing about a personal anecdote the speaker tells → off-script
+- Spoken words are a natural aside or joke between sections → off-script
+
+**Partial matches**: If the speaker delivers only part of a script section before
+restarting, that is a retake of that section, not a match. A match requires the
+section's core meaning to be fully conveyed.
+
+### Step 3 — Identify Retakes Within Matched Sections
+
+For each script section:
+1. Find ALL transcript segments that match it (chronological order)
+2. If multiple matches exist → all earlier matches are **retakes**
+3. The **LAST match** is the successful take → KEEP it
+4. All earlier matches → add to `removed_segments` with reason `"retake — repeated Section N"`
+
+### Step 4 — Handle Off-Script Content
+
+Any transcript segments that do not match ANY script section are **off-script**.
+Remove them with reason `"off-script — does not match any script section"`.
+
+**Exception — brief natural transitions**: If an off-script segment is:
+- Less than 3 seconds long, AND
+- Sits between two kept segments, AND
+- Is a natural transition phrase (e.g. "okay so", "now", "alright", "moving on")
+
+...then KEEP it. These provide natural pacing between sections.
+
+### Step 5 — Handle Unmatched Script Sections
+
+If a script section has NO matching delivery in the transcript:
+- Do NOT fabricate content
+- Add a warning to the cut plan summary: "Warning: Script section N ('[first few words]...') has no matching delivery in the transcript."
+- This may mean the presenter skipped that section or it may indicate a matching failure — flag it for the user
+
+### Retake Detection Still Applies
+
+Even in script-guided mode, apply retake detection within matched sections:
+- If the final take of a section contains internal stumbles or restarts, split
+  the keep_segment to exclude them (same within-segment validation rules apply)
+- The "keep the final take" rule from retake-only mode applies identically here
+
+---
+
+## Shared Rules (Both Modes)
+
+### Output Format
 
 Generate `workspace/temp/<source_stem>/cut_spec.json` with this structure:
 
@@ -80,6 +174,8 @@ Generate `workspace/temp/<source_stem>/cut_spec.json` with this structure:
 Timestamps must be in `HH:MM:SS` or `HH:MM:SS.ms` format, taken from the Whisper
 transcript's `segments[].start` and `segments[].end` values.
 
+In script-guided mode, the `note` field should read `"Section N: [brief description]"`.
+
 **Executor-applied padding (do not add manually):**
 `apply_cuts.py` automatically applies:
 - **0.1s start padding** — subtracts 0.1s from each segment start to prevent clipping
@@ -91,7 +187,7 @@ transcript's `segments[].start` and `segments[].end` values.
 
 Use raw Whisper timestamps in `cut_spec.json`. Do not pre-adjust for padding.
 
-## Within-Segment Validation (MANDATORY — do this BEFORE writing cut_spec.json)
+### Within-Segment Validation (MANDATORY — do this BEFORE writing cut_spec.json)
 
 After identifying a candidate kept range, **examine every individual transcript segment that falls
 within that range**. Do not treat merged blocks as automatically clean.
@@ -125,7 +221,7 @@ NOT:
 
 ---
 
-## Validation Before Writing cut_spec.json
+### Validation Before Writing cut_spec.json
 
 - [ ] All keep segments are non-overlapping
 - [ ] Segments are in chronological order
@@ -134,8 +230,9 @@ NOT:
 - [ ] At least one segment is being kept
 - [ ] Every transcript segment within each kept range has been individually examined
 - [ ] No keep_segment bridges a silence gap > 0.5s (split at the gap instead)
+- [ ] (Script-guided only) Every script section has at least one kept delivery OR is flagged as unmatched
 
-## User Review (Auto-Accept)
+### User Review (Auto-Accept)
 
 Before calling the executor, show the user an informational summary:
 
@@ -146,13 +243,14 @@ Then **proceed immediately** to apply cuts — do not wait for confirmation.
 
 If no retakes are detected, tell the user and proceed without edits (produce unchanged output).
 
-## Error Handling
+### Error Handling
 
 - If the transcript file is missing: stop and tell the user to run the transcription step first
 - If a segment's timestamps can't be determined precisely: use the nearest Whisper segment boundary and note the uncertainty to the user
 - If the source video file does not exist: stop immediately, do not call any executor
+- If the script file is missing when `script_mode = true`: stop and tell the user to provide the script again
 
-## Audio Cleanup (Pre-Processing)
+### Audio Cleanup (Pre-Processing)
 
 When the user opts for audio cleanup (Step 0 in the orchestrator):
 
@@ -166,19 +264,19 @@ When the user opts for audio cleanup (Step 0 in the orchestrator):
 - All subsequent pipeline steps (transcription, cuts) use the cleaned file as the source
 - The cleaned audio is an intermediate artifact — the final output from `apply_cuts.py` inherits the cleaned audio
 
-### Pipeline Stages
+#### Pipeline Stages
 The executor uses a multi-stage pipeline:
 1. Extract audio to 48kHz mono WAV
-2. Process: highpass → arnndn (RNNoise ML denoiser) → deesser → compressor → limiter
+2. Process: highpass → arnndn (RNNoise ML denoiser) → deesser → compressor → gate → limiter
 3. Two-pass loudnorm: measure loudness, then apply linear normalization
 4. Mux processed audio back with original video (`-c:v copy`)
 
-### Denoise Backends
+#### Denoise Backends
 - **arnndn** (default) — RNNoise neural model built into ffmpeg. Auto-downloads a 3MB model on first use to `~/.cache/clean_audio/cb.rnnn`
 - **afftdn** (fallback) — basic FFT denoiser. Used automatically if arnndn model download fails
 - Override with `--denoise-backend arnndn|afftdn`
 
-### Analyze Mode
+#### Analyze Mode
 Run `--analyze` to inspect audio before cleaning:
 ```
 python3 executors/video/clean_audio.py --analyze <input>
@@ -187,7 +285,7 @@ Returns loudness measurements and a recommended preset without processing the fi
 
 ---
 
-## Whisper Transcription Artefacts
+### Whisper Transcription Artefacts
 
 Whisper frequently garbles **colloquial, dialect, or code-switched speech** — especially
 Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "alamak",
@@ -205,7 +303,7 @@ Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "ala
 
 ---
 
-## What NOT to Do
+### What NOT to Do
 
 - Show the cut plan for informational purposes before calling `apply_cuts.py`, but do not wait for confirmation
 - Do not reorder segments — the output must maintain the original recording order
@@ -214,3 +312,4 @@ Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "ala
 - **Do not merge transcript segments across a gap > 0.5s into a single keep_segment** — always split at the gap
 - **Do not assume a silence gap within a kept block is empty** — the transcriber (Whisper) can miss brief utterances
 - **Do not classify colloquial/dialect speech as garbled** — Whisper often misheards Singlish; see "Whisper Transcription Artefacts" above
+- **(Script-guided only) Do not remove content solely because the wording differs from the script** — match by MEANING, not exact words
