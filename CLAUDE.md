@@ -55,7 +55,8 @@ and each project within a domain uses a dated prefix: `YYYYMMDD_<slug>`.
 | workspace/input/thumbnail/headshots/     | Shared headshot assets for all thumbnail projects     |
 | workspace/output/\<domain\>/\<PROJECT\>/ | All processed/final files land here                   |
 | workspace/temp/\<domain\>/\<PROJECT\>/   | Transcripts, cut specs, intermediate files            |
-| workspace/config/                        | Brand style guide and shared config                   |
+| workspace/config/                        | Cross-niche research config and shared config         |
+| memory/channel-profile.md                | Channel identity, niche terms, tone profile           |
 
 **Project naming**: `<PROJECT>` = `YYYYMMDD_<slug>` (e.g. `20260303_cpf-frs-vs-ers`).
 The date is auto-set to today when a pipeline starts.

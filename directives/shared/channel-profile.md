@@ -19,8 +19,7 @@ Shared by `/thumbnail` and `/write` pipelines. The channel profile lives at
 
 ### 1. Get Channel Identity
 
-Read `workspace/config/channel.json`. If it doesn't exist, ask the user for
-their YouTube channel URL or handle.
+Ask the user for their YouTube channel URL or handle.
 
 ### 2. Fetch Recent Video Metadata
 
@@ -85,10 +84,7 @@ Write the combined profile to `memory/channel-profile.md`:
 - Typical video length: <range>
 ```
 
-### 6. Update Config Files
-
-Update `workspace/config/channel.json`:
-- Set `user_channel_niche` to the niche description
+### 6. Update Config
 
 Update `workspace/config/cross_niche.json`:
 - Set `own_niche_terms` to the extracted niche terms array
@@ -96,10 +92,3 @@ Update `workspace/config/cross_niche.json`:
 ### 7. Confirm
 
 Ask user: "Here's your channel profile: [summary]. Anything to adjust?"
-
----
-
-## Legacy Migration
-
-If `memory/tone-profile.md` exists, migrate its content into the combined
-profile and delete the legacy file.

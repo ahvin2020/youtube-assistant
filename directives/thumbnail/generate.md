@@ -95,8 +95,8 @@ the user's recent video titles and transcripts. It provides:
 If no profile exists, the orchestrator will build one before proceeding.
 
 ### Self-Filtering
-If `workspace/config/channel.json` exists, read the `channel_id` field and
-always pass `--exclude-channel <channel_id>` to `research_thumbnails.py`.
+Read the Channel ID from `memory/channel-profile.md` (Identity section) and
+always pass `--exclude-channel <channel_id>` to research executors.
 This prevents the user's own videos from appearing in competitor results.
 
 ### Research Strategy
@@ -117,7 +117,7 @@ Each run samples different keywords and channels for variety. Config lives at
 `workspace/config/cross_niche.json`.
 
 The search uses:
-- `--exclude-channel` (if channel.json exists)
+- `--exclude-channel` (from channel profile Identity section)
 - `--min-subscribers 100000` — only include established creators (100K+ subs)
 - `--min-outlier 1.5` — only keep videos performing 1.5× their channel average
 

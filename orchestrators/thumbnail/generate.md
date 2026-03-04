@@ -73,13 +73,10 @@ The thumbnail pipeline needs the **Niche Terms** section (for cross-niche filter
 
 ## Step 2 — Competitive Research (Claude Intelligence Step)
 
-### 2a. Load Channel Config
+### 2a. Load Channel Identity
 
-Load channel config for self-filtering:
-```bash
-# Read workspace/config/channel.json if it exists
-# Extract channel_id for --exclude-channel flag
-```
+Extract `channel_id` from `memory/channel-profile.md` (Identity → Channel ID)
+for the `--exclude-channel` flag.
 
 No manual query generation needed — cross-niche research uses config-driven
 keyword search + monitored channel scanning.

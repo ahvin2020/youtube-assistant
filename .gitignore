@@ -15,8 +15,7 @@ workspace/output/*
 !workspace/output/.gitkeep
 workspace/temp/
 
-# Generated config (rebuilt by channel-profile pipeline)
-workspace/config/channel.json
+# Generated config
 workspace/config/research_sheet.json
 
 # ML model binaries (download separately)
