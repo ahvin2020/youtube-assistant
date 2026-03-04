@@ -17,6 +17,7 @@ workspace/temp/
 
 # Generated config
 workspace/config/research_sheet.json
+memory/channel-profile.md
 
 # ML model binaries (download separately)
 executors/thumbnail/models/
