@@ -81,8 +81,8 @@ def trim_video(
     if re_encode:
         cmd = [
             "ffmpeg",
+            "-ss", str(start_s),       # input seek: fast demuxer-level seeking
             "-i", source,
-            "-ss", str(start_s),       # output seek: frame-accurate (no keyframe pre-roll)
             "-t", str(duration),
             "-c:v", "libx264",
             "-preset", "veryfast",

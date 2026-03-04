@@ -169,20 +169,15 @@ a URL that doesn't actually contain the claimed information — erodes trust.
 
 ## Tone Profile
 
-### First-Time Setup
-If no tone profile exists in memory (`memory/tone-profile.md`), ask the user for
-their YouTube channel link. Then:
-1. Fetch transcripts from 3–5 recent videos using `fetch_transcript.py`
-2. Analyze: vocabulary level, sentence structure, use of humor, how they explain
-   technical concepts, catchphrases or recurring patterns, level of formality
-3. Write the profile to `memory/tone-profile.md`
-4. Confirm with the user: "Here's what I picked up about your style: [summary].
-   Anything you'd adjust?"
+### Setup
+Follow `directives/shared/channel-profile.md` to check/build the channel profile.
+The write pipeline needs the **Tone Profile** section (for voice/style).
 
 ### Using the Tone Profile
 - Phase 1 (Research) and Phase 2 (Outline) do NOT use the tone profile — these
   are factual/structural
-- Phase 3 (Script Writing) applies the tone profile to write in the user's voice
+- Phase 3 (Script Writing) applies the tone profile section from
+  `memory/channel-profile.md` to write in the user's voice
 - The user can override tone per-project: "make this one more serious" or
   "this is a casual rant-style video"
 
@@ -277,6 +272,13 @@ three unless the user asks for them. The constraint is the point.
 
 ### Script — Long-Form (`script.md`)
 
+**Source citation formatting**: When citing a source in the script, the `[Source: ...]`
+line must be on its **own line below** the sentence it supports, never on the same line.
+```
+Oil spiked to USD75.33, a 12% increase from Friday's close.
+[Source: CNBC — Markets brace for impact](https://www.cnbc.com/...)
+```
+
 ```markdown
 # Script: <Topic>
 **Format**: Long-form  |  **Based on**: outline.md  |  **Tone**: <tone profile or override>
@@ -288,6 +290,35 @@ three unless the user asks for them. The constraint is the point.
 <full script text>
 
 ...
+
+---
+
+## Title Options
+1. <option 1>
+2. <option 2>
+3. <option 3>
+4. <option 4>
+5. <option 5>
+
+**Selected title**: <user's pick or custom>
+
+## Video Description
+
+🔗 LINKS
+<placeholder lines for links — user fills in later>
+
+<description body — 2–4 sentence summary in channel tone>
+
+⏱️ TIMESTAMPS\
+00:00 — Introduction\
+MM:SS — <section from outline>\
+...
+
+⚠️ DISCLAIMER\
+None of this is meant to be construed as investment advice. It's for
+information purposes only. Links above include affiliate commission or
+referrals. I'm part of an affiliate network and I receive compensation
+from partnering websites.
 ```
 
 ### Script — Short-Form (`script.md` or `reel-N.md`)
@@ -315,3 +346,63 @@ toward the payoff.
 - Do not fabricate statistics or data points — if you can't find data, say so
 - Do not reimplement what `fetch_transcript.py` does — call the executor
 - Do not delete or overwrite `brief.md` when updating — append or edit in place
+
+---
+
+## Title & Description
+
+### When to Enter
+- User says "add title and description" (or similar) during the script phase
+- This is Phase 4 — a separate iterative phase between script writing and finalization
+- Do NOT auto-enter this phase — wait for explicit user instruction
+
+### Title Rules
+- Present **5 variations** mixing styles: curiosity gap, direct/factual, number-driven,
+  question, bold claim
+- All titles **under 70 characters**
+- No clickbait the script cannot back up
+- User picks one, modifies one, or provides their own → record as `**Selected title**`
+
+### Description Format (fixed structure)
+1. **Links placeholder** — blank lines for the user to fill in later (affiliate links, socials, etc.)
+2. **Description body** — 2–4 sentence summary of the video, written in the channel's tone
+3. **Timestamps** — derived from outline section headers, `MM:SS` placeholder format
+   (user fills in real times after editing the final video)
+4. **Disclaimer** — this text is fixed and must **never** be modified:
+   ```
+   None of this is meant to be construed as investment advice. It's for
+   information purposes only. Links above include affiliate commission or
+   referrals. I'm part of an affiliate network and I receive compensation
+   from partnering websites.
+   ```
+
+### Output
+- Appended to the bottom of `script.md` under a `---` separator
+- Not a separate file — title and description live with the script
+- See the long-form script template above for the exact format
+
+---
+
+## Google Docs Export
+
+### When to Offer
+- After the user says "script done" (long-form or short-form), before the completion summary
+- After the user says "reels done" (spin-off reels), before the completion summary
+- Do NOT offer export during iterative loops — only at finalization
+
+### Rules
+- Always ask before exporting — never auto-export
+- Use the executor: `executors/research/export_google_doc.py` — do not reimplement
+- Document title: `"Script: <topic>"` (or `"Reel <N>: <topic>"` for spin-offs)
+- If `credentials.json` is missing, provide setup instructions and proceed without export
+- If export fails for any reason, inform the user and proceed — the local file is always
+  the source of truth
+- The local `script.md` file is always kept regardless of export success
+- Include the Google Doc URL in the completion summary if export succeeded
+
+### Dependencies
+- `python-docx` (pip install python-docx)
+- `google-api-python-client`, `google-auth-httplib2`, `google-auth-oauthlib` (pip install)
+- `credentials.json` in project root (see `credentials.sample.json` for format)
+- Google Cloud project with Google Drive API enabled
+- First run requires browser-based OAuth consent (token cached afterward)

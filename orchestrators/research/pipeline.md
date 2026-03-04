@@ -16,12 +16,12 @@ Follow every step in order. Do not skip steps.
 ls workspace/temp/research/ 2>/dev/null
 ```
 
-If directories exist, read each project's `state.json` and present a list:
+If directories exist (format: `YYYYMMDD_<slug>`), read each project's `state.json` and present a list:
 
 ```
 Existing research projects:
-  1. dca-vs-lump-sum (Phase: outline, Last updated: 2026-02-28)
-  2. fed-rate-cut-impact (Phase: research, Last updated: 2026-03-01)
+  1. 20260228_dca-vs-lump-sum (Phase: outline, Last updated: 2026-02-28)
+  2. 20260301_fed-rate-cut-impact (Phase: research, Last updated: 2026-03-01)
 
 Resume one of these, or start a new project?
 ```
@@ -49,6 +49,7 @@ From the user's answer, determine:
 - **Research mode**: Topic Deep-Dive, News Reaction, Strategy Comparison, or AI Scenario Analysis
   (see `directives/research/topic.md` for definitions)
 - **Slug**: a URL-safe lowercase version of the topic (e.g., "DCA vs Lump Sum" → `dca-vs-lump-sum`)
+- **PROJECT**: `YYYYMMDD_<slug>` using today's date (e.g., `20260303_dca-vs-lump-sum`)
 
 **For short-form only**: ask whether the user wants a research phase or wants to skip
 straight to outlining. If they already know their point, research can be skipped.
@@ -56,11 +57,11 @@ straight to outlining. If they already know their point, research can be skipped
 Create the project directory and state file:
 
 ```bash
-mkdir -p "workspace/temp/research/<slug>/transcripts"
-mkdir -p "workspace/output/research/<slug>"
+mkdir -p "workspace/temp/research/<PROJECT>/transcripts"
+mkdir -p "workspace/output/research/<PROJECT>"
 ```
 
-Write `workspace/temp/research/<slug>/state.json`:
+Write `workspace/temp/research/<PROJECT>/state.json`:
 ```json
 {
   "topic": "<user's topic>",
@@ -96,7 +97,7 @@ Adjust depth based on format:
 1. Run web searches relevant to the topic (use WebSearch tool)
 2. Find 3–5 relevant YouTube videos — fetch their transcripts:
    ```bash
-   python3 executors/research/fetch_transcript.py "<youtube_url>" "workspace/temp/research/<slug>/transcripts/<video_slug>.json"
+   python3 executors/research/fetch_transcript.py "<youtube_url>" "workspace/temp/research/<PROJECT>/transcripts/<video_slug>.json"
    ```
 3. Read each transcript and summarize the key arguments
 
@@ -109,12 +110,12 @@ Adjust depth based on format:
 - **Topic Deep-Dive**: Identify consensus vs contrarian takes, key data points
 - **News Reaction**: Find historical precedents, build comparison table
 - **Strategy Comparison**: Gather existing analyses; if user requests, scaffold a Python
-  backtest in `workspace/temp/research/<slug>/backtests/`
+  backtest in `workspace/temp/research/<PROJECT>/backtests/`
 - **AI Scenario Analysis**: Structure as Assumptions → First-order → Second-order → Implications
 
 ### Write the Research Brief
 
-Write findings to `workspace/temp/research/<slug>/brief.md` following the format
+Write findings to `workspace/temp/research/<PROJECT>/brief.md` following the format
 in `directives/research/topic.md`.
 
 ### Verify Sources
@@ -172,7 +173,7 @@ with the rest of the document.
 
 ### Initial Outline
 
-If a `brief.md` exists, read `workspace/temp/research/<slug>/brief.md` to refresh context.
+If a `brief.md` exists, read `workspace/temp/research/<PROJECT>/brief.md` to refresh context.
 (For short-form projects that skipped research, work from the user's stated topic/angle.)
 
 **Long-form outline** — propose a multi-section structure. Consider:
@@ -187,7 +188,7 @@ Consider:
 - What's the single point? (One insight only — no tangents)
 - What's the payoff? (Takeaway, punchline, or CTA)
 
-Write to `workspace/temp/research/<slug>/outline.md` following the format-appropriate
+Write to `workspace/temp/research/<PROJECT>/outline.md` following the format-appropriate
 template in `directives/research/topic.md`.
 
 Present the outline to the user.
@@ -211,16 +212,8 @@ Present the outline to the user.
 
 ### Tone Profile Check
 
-Before writing, check if a tone profile exists:
-
-1. Check if `memory/tone-profile.md` exists (in the auto-memory directory)
-2. If it exists: load it and use as the voice guide
-3. If it doesn't exist: ask the user for their YouTube channel link, then:
-   - Fetch transcripts from 3–5 recent videos using `fetch_transcript.py`
-   - Analyze speaking style (vocabulary, sentence structure, formality, humor,
-     how technical concepts are explained, catchphrases)
-   - Write profile to `memory/tone-profile.md`
-   - Confirm with user before using
+Follow `directives/shared/channel-profile.md` to check/build the channel profile.
+Load the **Tone Profile** section and use as the voice guide.
 
 Check if the user wants a tone override for this project. If so, record it in
 `state.json` under `tone_override`.
@@ -228,18 +221,25 @@ Check if the user wants a tone override for this project. If so, record it in
 ### Initial Script Draft
 
 Read:
-- `workspace/temp/research/<slug>/brief.md` (for content/facts — if it exists)
-- `workspace/temp/research/<slug>/outline.md` (for structure)
+- `workspace/temp/research/<PROJECT>/brief.md` (for content/facts — if it exists)
+- `workspace/temp/research/<PROJECT>/outline.md` (for structure)
 - Tone profile (for voice)
 
-**Long-form**: Write the full script section by section to
-`workspace/output/research/<slug>/script.md`. Target ~1500–2500 words.
-Present section by section — long scripts are easier to review in chunks.
+**Delegate to Opus subagent**: Spawn an Agent with `model: "opus"` to write the
+script draft — creative writing benefits from Opus-level quality. Pass it all three
+inputs (brief content, outline content, tone profile) in the prompt, along with the
+format (long-form or short-form), the output format rules from
+`directives/research/topic.md`, and any tone override from `state.json`. The subagent
+should return the full script text; write it to
+`workspace/output/research/<PROJECT>/script.md`.
 
-**Short-form**: Write a single flowing script to
-`workspace/output/research/<slug>/script.md`. Target ~150–250 words.
-Present the full script at once — it's short enough to review whole.
-Read it back mentally and cut anything that doesn't earn its place.
+**Long-form**: Instruct the subagent to write the full script section by section.
+Target ~1500–2500 words. Present section by section — long scripts are easier to
+review in chunks.
+
+**Short-form**: Instruct the subagent to write a single flowing script.
+Target ~150–250 words. Present the full script at once — it's short enough to review
+whole. Tell it to cut anything that doesn't earn its place.
 
 ### Iterative Loop
 
@@ -247,11 +247,78 @@ Read it back mentally and cut anything that doesn't earn its place.
 
 | User says | Action |
 |---|---|
-| Rewrites a section | Update that section in `script.md` |
-| "Make this part more casual" | Rewrite with adjusted tone |
-| "Add X here" | Insert new content, referencing brief for accuracy |
-| "Cut this section" | Remove from `script.md` |
+| Rewrites a section | Delegate rewrite to subagent with current script + instructions, update `script.md` |
+| "Make this part more casual" | Delegate rewrite to subagent with tone adjustment, update `script.md` |
+| "Add X here" | Delegate to subagent with brief context + insertion instructions, update `script.md` |
+| "Cut this section" | Remove from `script.md` (no subagent needed — just edit) |
+| "Add title and description" | Move to Phase 4 — Title & Description |
 | "Script done" | Update `state.json` phase → `"complete"`, finalize |
+
+**Delegation for rewrites**: For any action that involves writing or rewriting
+script text, spawn a subagent with the current `script.md` content, the relevant
+section of `brief.md` (if needed for accuracy), the tone profile, and specific instructions
+for what to change. Apply the returned text to `script.md`.
+
+**Do NOT suggest moving to the next phase.** Wait for the user to explicitly say so.
+
+---
+
+## Phase 4 — Title & Description
+
+Triggered when the user says "add title and description" (or similar: "title and description",
+"work on title").
+
+Update `state.json`: set `phase` to `"title"`.
+
+### Step 1 — Title Options
+
+Read `workspace/output/research/<PROJECT>/script.md` and
+`workspace/temp/research/<PROJECT>/outline.md`.
+
+Draft **5 title variations** for the video. Mix styles:
+- Curiosity gap (e.g., "Why X Is Changing Everything")
+- Direct / factual (e.g., "X Explained in 10 Minutes")
+- Number-driven (e.g., "3 Reasons X Matters for Your Portfolio")
+- Question (e.g., "Is X the Biggest Risk to Your Money?")
+- Bold claim (e.g., "X Will Define the Next Decade")
+
+All titles must be **under 70 characters**. No clickbait that the script cannot back up.
+
+Present the 5 options and ask the user to pick one, modify one, or provide their own.
+
+### Step 2 — Video Description
+
+Once the title is selected, draft the full video description block:
+
+1. **Links placeholder** — blank lines the user fills in later
+2. **Description body** — 2–4 sentence summary of the video, written in the channel's tone
+3. **Timestamps** — derived from outline section headers, using `MM:SS` placeholder times
+   (user fills in real times after editing the video)
+4. **Disclaimer** — fixed text, never modify:
+   ```
+   None of this is meant to be construed as investment advice. It's for
+   information purposes only. Links above include affiliate commission or
+   referrals. I'm part of an affiliate network and I receive compensation
+   from partnering websites.
+   ```
+
+Present the full description for the user to review.
+
+### Step 3 — Append to Script
+
+Once the user approves (or after iterating), append the title and description to the
+bottom of `script.md` under a `---` separator. See the directive for the exact format.
+
+### Iterative Loop
+
+**STOP and wait for the user.** The user may:
+
+| User says | Action |
+|---|---|
+| "Change the title to ..." | Update the selected title in `script.md` |
+| "Rewrite the description" | Rewrite description body |
+| "Update timestamps" | Adjust timestamp labels or order |
+| "Script done" | Move to Finalization |
 
 **Do NOT suggest moving to completion.** Wait for the user to explicitly say so.
 
@@ -262,15 +329,36 @@ Read it back mentally and cut anything that doesn't earn its place.
 When the user says "script done":
 
 1. Update `state.json`: set `phase` to `"complete"`
-2. Report to the user:
+2. **Google Docs Export (Optional)**:
+   Ask the user: "Would you like to export the script to a Google Doc?"
+
+   **If yes**:
+   - Determine the document title: use the project topic from `state.json`
+     (e.g., `"Script: <topic>"`)
+   - Run the executor:
+     ```bash
+     /opt/homebrew/bin/python3 executors/research/export_google_doc.py "workspace/output/research/<PROJECT>/script.md" --title "Script: <topic>"
+     ```
+   - Parse the JSON output
+   - If successful: include the Google Doc URL in the completion summary (see below)
+   - If it fails with a credentials error: tell the user how to set up credentials
+     (copy `credentials.sample.json` to `credentials.json`, fill in from Google Cloud Console,
+     enable Google Drive API), then proceed with normal completion
+   - If it fails with any other error: show the error message and proceed with normal
+     completion (the script file is still available locally)
+
+   **If no**: proceed to step 3.
+
+3. Report to the user:
    ```
    Research project complete!
 
-   Final script:  workspace/output/research/<slug>/script.md
-   Research brief: workspace/temp/research/<slug>/brief.md
-   Outline:        workspace/temp/research/<slug>/outline.md
+   Final script:  workspace/output/research/<PROJECT>/script.md
+   Google Doc:     <doc_url>        ← only if export was successful
+   Research brief: workspace/temp/research/<PROJECT>/brief.md
+   Outline:        workspace/temp/research/<PROJECT>/outline.md
 
-   Temp files in workspace/temp/research/<slug>/ can be safely deleted
+   Temp files in workspace/temp/research/<PROJECT>/ can be safely deleted
    once you no longer need the research materials.
    ```
 
@@ -338,8 +426,14 @@ For each selected angle, go through the short-form outline → script flow:
 
 The user can also request additional reels at any point during this process.
 
-When all reels are done, the user says "reels done" → update `state.json` phase
-to `"complete"` and report the list of reel scripts produced.
+When all reels are done, the user says "reels done":
+
+1. Update `state.json` phase to `"complete"`
+2. Ask the user: "Would you like to export the reel scripts to Google Docs?"
+   - If yes: run `export_google_doc.py` for each `reel-<N>.md` file with title
+     `"Reel <N>: <topic>"`. Collect all doc URLs.
+   - If no: proceed to step 3.
+3. Report the list of reel scripts produced (include Google Doc URLs if exported).
 
 ---
 

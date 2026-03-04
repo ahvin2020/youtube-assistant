@@ -14,57 +14,110 @@ The user may provide inline input after `/cut`:
 $ARGUMENTS
 ```
 
-Evaluate `$ARGUMENTS`:
+Parse `$ARGUMENTS` for **three** things — script source, output mode, and video filename:
+
+### 0a. Script source
 
 1. **Contains a Google Doc URL** (matches `docs.google.com/document/d/`):
    Set `inline_script = "gdoc"` and store the URL. The script question will be skipped.
 
-2. **Contains non-empty text** that is NOT a Google Doc URL:
+2. **Contains non-empty text** that is NOT a Google Doc URL and NOT an output-mode keyword:
    Set `inline_script = "text"` and store the text. The script question will be skipped.
 
 3. **Empty / blank**:
    Set `inline_script = null`. The script question will be asked as usual.
 
+### 0b. Output mode
+
+Scan `$ARGUMENTS` (case-insensitive) for output-mode keywords:
+
+| User says (examples)                          | `inline_output_mode` |
+|-----------------------------------------------|----------------------|
+| "1 file", "single file", "joined", "single"  | `joined`             |
+| "project", "xml", "premiere"                  | `project`            |
+| "both"                                        | `both`               |
+| _(none of the above)_                         | `null`               |
+
+If a keyword is found, set `inline_output_mode` accordingly. The output-mode question will be skipped.
+
+### 0c. Video filename
+
+If `$ARGUMENTS` contains a recognizable video filename (e.g. `IMG_0206.mov`, `clip.mp4`),
+store it as `inline_video`. This will be matched against files in `workspace/input/video/`
+(case-insensitive, searched recursively) in Step 1, skipping the file selection question.
+
 ## Step 1 — Identify the Source Video
 
-List the files currently in `workspace/input/` using the Bash tool:
+Find video files in `workspace/input/video/` using the Bash tool:
 ```bash
-ls workspace/input/
+find workspace/input/video/ -type f \( -iname "*.mov" -o -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.avi" \) 2>/dev/null
 ```
 
-If only one file is present, confirm with the user: **"I found [filename] — is this the file you want to trim?"**
+This searches recursively — files may be at the root or inside dated project folders
+(e.g. `workspace/input/video/20260302_cpf-frs-vs-ers/IMG_0206.mov`).
 
-If multiple files are present, ask the user: **"Which video file would you like to trim?"**
+**If `inline_video` is set**: match it (case-insensitive) against the listing. If a match is
+found, use that file silently — no confirmation needed. If no match, tell the user and ask
+which file to use.
 
-## Step 1.5 — Script, Output Mode & Audio Cleanup
+**If `inline_video` is null**:
+- If only one file is present, confirm with the user: **"I found [filename] — is this the file you want to trim?"**
+- If multiple files are present, ask the user: **"Which video file would you like to trim?"**
 
-### If `inline_script` is set — ask only output mode and audio cleanup
+## Step 1.1 — Derive Project Name
 
-The script was already provided inline, so skip the script question. Ask **two questions** in a single `AskUserQuestion` call:
+After identifying the source video, derive the `PROJECT` name:
+
+1. **STEM** = source filename without extension (e.g. `IMG_0206` from `IMG_0206.mov`)
+2. **DATE** = today's date as `YYYYMMDD` (e.g. `20260303`)
+3. **If the video is inside a dated folder** (parent folder matches `YYYYMMDD_*`):
+   use that folder name as `PROJECT` (e.g. `20260302_cpf-frs-vs-ers`)
+4. **Otherwise**: `PROJECT` = `<DATE>_<STEM>` (e.g. `20260303_IMG_0206`). After the
+   script is loaded (Step 1.5), if a clearer topic slug can be derived from the script
+   content, rename to `<DATE>_<slug>` (e.g. `20260303_cpf-frs-vs-ers`).
+
+Create the project temp directory immediately:
+```bash
+mkdir -p "workspace/temp/video/<PROJECT>"
+mkdir -p "workspace/output/video/<PROJECT>"
+```
+
+## Step 1.5 — Script & Output Mode
+
+Determine which questions still need answers based on what was parsed in Step 0.
+
+### If BOTH `inline_script` AND `inline_output_mode` are set
+
+Everything is known — skip straight to handling script input below. No questions needed.
+
+### If `inline_script` is set but `inline_output_mode` is null
+
+Ask **one question** — output mode only:
 
 **Question 1 — Output mode** (`multiSelect: false`):
 - **Video project** — Individual clips + an XML project file you can import into Premiere Pro
 - **Single joined file** — All kept segments concatenated into one video file
 - **Both** — Joined file + video project (single efficient extraction)
 
-**Question 2 — Clean audio** (`multiSelect: false`):
-- **Yes (voice preset)** — Clean audio before editing (recommended for raw recordings with room reverb or uneven levels)
-- **No** — Skip audio cleanup, use the raw audio as-is
+### If `inline_output_mode` is set but `inline_script` is null
 
-### If `inline_script` is null — ask all three questions
+Ask **one question** — script source only:
 
-Ask the user **all three questions together** in a single `AskUserQuestion` call:
+**Question 1 — Script** (`multiSelect: false`):
+- **Google Doc link** — I have a link to my script
+- **Paste script text** — I'll paste my script directly
+- **No script** — Detect retakes automatically (no script needed)
+
+### If BOTH are null
+
+Ask **both questions together** in a single `AskUserQuestion` call:
 
 **Question 1 — Output mode** (`multiSelect: false`):
 - **Video project** — Individual clips + an XML project file you can import into Premiere Pro
 - **Single joined file** — All kept segments concatenated into one video file
 - **Both** — Joined file + video project (single efficient extraction)
 
-**Question 2 — Clean audio** (`multiSelect: false`):
-- **Yes (voice preset)** — Clean audio before editing (recommended for raw recordings with room reverb or uneven levels)
-- **No** — Skip audio cleanup, use the raw audio as-is
-
-**Question 3 — Script** (`multiSelect: false`):
+**Question 2 — Script** (`multiSelect: false`):
 - **Google Doc link** — I have a link to my script
 - **Paste script text** — I'll paste my script directly
 - **No script** — Detect retakes automatically (no script needed)
@@ -80,7 +133,7 @@ If the URL was provided inline, use it directly. Otherwise ask the user for the 
    Extract the `<ID>` portion (the string between `/d/` and the next `/`).
 2. Fetch the plain-text export:
    ```bash
-   curl -sL "https://docs.google.com/document/d/<ID>/export?format=txt" -o "workspace/temp/<STEM>/script.txt"
+   curl -sL "https://docs.google.com/document/d/<ID>/export?format=txt" -o "workspace/temp/video/<PROJECT>/script.txt"
    ```
 3. Verify the file was fetched successfully — read the first few lines. If the file is
    empty or contains HTML (e.g. `<!DOCTYPE` or `<html`), tell the user:
@@ -91,11 +144,11 @@ If the URL was provided inline, use it directly. Otherwise ask the user for the 
 
 **If `inline_script = "text"` OR user selected "Paste script text"**:
 
-If the text was provided inline, save it directly to `workspace/temp/<STEM>/script.txt`
+If the text was provided inline, save it directly to `workspace/temp/video/<PROJECT>/script.txt`
 using the Write file tool — no need to ask the user to paste again.
 
 Otherwise, wait for the user to paste their script. Once received, save it to
-`workspace/temp/<STEM>/script.txt` using the Write file tool.
+`workspace/temp/video/<PROJECT>/script.txt` using the Write file tool.
 
 Set `script_mode = true`.
 
@@ -109,8 +162,6 @@ content that matches your script."**
 Pass `script_mode` to the orchestrator — it controls which analysis path Step 2 follows.
 
 In Step 4, the executor runs once regardless of mode selection.
-
-The audio cleanup preference is passed to the orchestrator's Step 0 — do not ask again.
 
 ## Step 2 — Load Rules and Follow the Pipeline
 

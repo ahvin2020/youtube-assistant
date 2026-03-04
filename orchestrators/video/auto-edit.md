@@ -17,11 +17,12 @@ the current step produces an error.
 ## Pre-Flight Checklist
 
 Before starting, verify:
-- [ ] `source_file` exists in `workspace/input/`
+- [ ] `source_file` exists in `workspace/input/video/` (may be in a dated subfolder)
 - [ ] Derive `STEM` = source filename without extension (e.g. `IMG_0171` from `IMG_0171.MOV`)
-- [ ] `TEMP_DIR` = `workspace/temp/<STEM>/` — create if not: `mkdir -p workspace/temp/<STEM>`
-- [ ] `workspace/output/` directory exists (create if not: `mkdir -p workspace/output`)
-- [ ] If `script_mode = true`: verify `workspace/temp/<STEM>/script.txt` exists and is non-empty
+- [ ] `PROJECT` is set by the `/cut` command (format: `YYYYMMDD_<slug>`, e.g. `20260302_cpf-frs-vs-ers`)
+- [ ] `TEMP_DIR` = `workspace/temp/video/<PROJECT>/` — create if not: `mkdir -p workspace/temp/video/<PROJECT>`
+- [ ] `workspace/output/video/<PROJECT>/` exists (create if not: `mkdir -p workspace/output/video/<PROJECT>`)
+- [ ] If `script_mode = true`: verify `workspace/temp/video/<PROJECT>/script.txt` exists and is non-empty
 
 Use `TEMP_DIR` for all temp file paths throughout this pipeline. This keeps each video's
 intermediate files isolated so multiple videos can be processed concurrently without conflict.
@@ -30,124 +31,56 @@ If source file is not found: stop immediately.
 
 ---
 
-## Steps 0 & 1 — Audio Cleanup + Transcription
-
-The user's audio cleanup preference was already collected during the `/cut` command setup.
-Do **not** ask again.
-
-### If audio cleanup is enabled — analyze, then run cleanup in background while transcription proceeds
-
-Audio cleanup does not alter timing, so the raw file's Whisper timestamps align perfectly
-with the cleaned file. The cleaned file is only needed at Step 4 (apply cuts), not for
-transcription or semantic alignment. Exploit this by running cleanup in the background
-while transcription and alignment proceed in the foreground.
-
-#### Step 0a — Analyze audio (fast, ~2s)
-
-Run the analyzer first to auto-detect the best preset:
+## Step 1 — Transcription
 
 ```bash
-python3 executors/video/clean_audio.py --analyze "workspace/input/<source_file>"
+python3 executors/video/transcribe.py "<source_file_path>" "workspace/temp/video/<PROJECT>/transcript.json" --language en --model small --workers 4
 ```
 
-Read `recommended_preset` from the JSON output. Use it as the cleanup preset unless the
-user explicitly requested a specific preset (e.g. `--preset light`).
-
-Report: "Audio analysis: measured X LUFS, recommended preset: Y"
-
-#### Step 0b — Launch cleanup (background) + transcription (foreground)
-
-**Launch cleanup in the background**, then run transcription in the foreground:
-
-```bash
-# Background: clean the audio (use the analyzed preset)
-# Use run_in_background=true — we won't need the result until Step 4
-python3 executors/video/clean_audio.py "workspace/input/<source_file>" "workspace/temp/<STEM>/<STEM>_cleaned<ext>" --preset <recommended_preset>
-
-# Foreground: transcribe the RAW file
-# Use --workers 2 (not 4) because ffmpeg cleanup is consuming cores concurrently
-python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small --workers 2
-```
-
-**When transcription finishes, proceed immediately to Step 2** (alignment).
-Do NOT wait for cleanup to finish — it runs in the background and is only needed at Step 4.
-
-On transcription success: report "Transcription complete. X segments found."
-
-On transcription failure: show the full error JSON and stop. Common fixes:
-- `openai-whisper not installed` → `pip install openai-whisper`
-- `ffmpeg not found` → `brew install ffmpeg`
-
-The user may also request a different cleanup preset (`light`, `heavy`) or custom options
-(e.g. `--no-eq`, `--target-lufs -16`). Pass those through to the executor, overriding
-the analyzer's recommendation.
-
-### If audio cleanup is skipped — transcribe only
-
-```bash
-# All cores available — use more workers for faster transcription
-python3 executors/video/transcribe.py "workspace/input/<source_file>" "workspace/temp/<STEM>/transcript.json" --language en --model small --workers 4
-```
-
-If `workspace/temp/<STEM>/transcript.json` already exists from a previous run, overwrite it —
+If `workspace/temp/video/<PROJECT>/transcript.json` already exists from a previous run, overwrite it —
 always re-transcribe to ensure the transcript matches the current source file.
 
 Wait for this to complete. It may take 1–3 minutes depending on video length.
 
 On success: report to the user: "Transcription complete. X segments found."
 
-On failure: show the full error JSON and stop.
+On failure: show the full error JSON and stop. Common fixes:
+- `openai-whisper not installed` → `pip install openai-whisper`
+- `ffmpeg not found` → `brew install ffmpeg`
 
 ---
 
 ## Step 2 — Analyze and Build Cut Spec (Claude's Intelligence Step)
 
-Read `directives/video/auto-edit.md` and apply the rules for the active mode.
+### ⚠️ MUST USE SUBAGENT — Output Token Budget
 
-### If `script_mode = false` (Retake-Only)
+Transcripts are large (400+ segments, 3000+ lines of JSON). Reading the full transcript
+into the main conversation **will exhaust the output token limit** and abort the pipeline.
 
-Inputs:
-- `workspace/temp/<STEM>/transcript.json`
+**Always delegate Step 2 to a subagent** using the Agent tool (`subagent_type: general-purpose`,
+`model: "opus"`). Semantic alignment is a high-judgment task that benefits from Opus-level
+reasoning. The subagent reads the transcript and script within its own context window,
+performs all analysis, writes `cut_spec.json` directly, and returns only a brief summary.
 
-Apply the **Mode: Retake-Only** rules from the directive.
-Work through the transcript chronologically. Group related content into logical
-sections. For each section, find all spoken attempts and keep only the final
-delivery. Remove all earlier attempts and any off-topic content.
+### Subagent prompt template
 
-### If `script_mode = true` (Script-Guided)
-
-Inputs:
-- `workspace/temp/<STEM>/transcript.json`
-- `workspace/temp/<STEM>/script.txt`
-
-Apply the **Mode: Script-Guided** rules from the directive:
-1. Parse the script — strip non-spoken elements (headers, URLs, citations, stage
-   directions, metadata). Number the remaining spoken sections.
-2. For each script section, find all transcript segments that match semantically.
-3. For each section with multiple matches, keep only the final take.
-4. Remove all off-script content (except brief natural transitions).
-5. Flag any script sections with no matching delivery.
+Provide the subagent with:
+1. The file paths: transcript, script (if script_mode), and output cut_spec.json
+2. The active mode (`script_mode` true or false)
+3. The full rules from `directives/video/auto-edit.md` for the active mode — copy the
+   relevant mode section plus the shared rules (output format, within-segment validation,
+   Whisper artefacts) into the subagent prompt so it has everything it needs
+4. Instructions to write `cut_spec.json` using the Write tool (not print in chat)
+5. Instructions to return a brief summary:
+   - **Retake-Only**: retakes found, total duration to remove, uncertain segments
+   - **Script-Guided**: script sections matched vs unmatched, unmatched section names,
+     retakes within matched sections, off-script content removed, total duration to remove
 
 ### Output (both modes)
 
-- `workspace/temp/<STEM>/cut_spec.json`
+- `workspace/temp/video/<PROJECT>/cut_spec.json`
 
-### ⚠️ Output Token Budget — CRITICAL
-
-**Do NOT print or echo `cut_spec.json` contents in the chat response.** Writing it in the
-response will exceed the output token limit and abort the pipeline.
-
-Instead:
-1. Do your analysis silently (internal reasoning only)
-2. Write the result directly to `workspace/temp/<STEM>/cut_spec.json` using the **Write file tool**
-3. In the chat, report only a brief summary:
-   - **Retake-Only**: Number of retakes / bad takes found, total duration to be removed,
-     any segments you were uncertain about (flag by timestamp only)
-   - **Script-Guided**: Number of script sections matched vs unmatched, any unmatched
-     sections (with first few words), number of retakes within matched sections,
-     total off-script content removed, total duration to be removed
-
-Keep all JSON generation inside the Write tool call — never in the response text.
+**Do NOT read the transcript in the main conversation.** The subagent handles it all.
 
 ---
 
@@ -156,7 +89,7 @@ Keep all JSON generation inside the Write tool call — never in the response te
 Run the validator immediately after writing `cut_spec.json`:
 
 ```bash
-python3 executors/video/validate_cut_spec.py "workspace/temp/<STEM>/transcript.json" "workspace/temp/<STEM>/cut_spec.json"
+python3 executors/video/validate_cut_spec.py "workspace/temp/video/<PROJECT>/transcript.json" "workspace/temp/video/<PROJECT>/cut_spec.json"
 ```
 
 **If exit code 0** (`valid: true`): proceed to Step 3.
@@ -214,39 +147,24 @@ Do **not** pause for user confirmation. Proceed directly to Step 4.
 
 ## Step 4 — Apply Cuts
 
-### If audio cleanup was launched in background — wait for it now
-
-Before applying cuts, check that the background cleanup task has finished.
-Use `TaskOutput` to collect the result.
-
-On cleanup success:
-- Report: "Audio cleaned. Preset: \<preset\>. Output: workspace/temp/\<STEM\>/\<STEM\>_cleaned\<ext\>"
-- **Update `source_file`** for apply_cuts to use the cleaned file:
-  `source_file = workspace/temp/<STEM>/<STEM>_cleaned<ext>`
-
-On cleanup failure: show the full error JSON and stop. Common fixes:
-- `ffmpeg not found` → `brew install ffmpeg`
-
-### Apply cuts
-
-All outputs go into a per-video folder: `workspace/output/<STEM>/`.
+All outputs go into a per-video folder: `workspace/output/video/<PROJECT>/`.
 Create it before running: `mkdir -p workspace/output/<STEM>`.
 
 Run the executor **once**. The command depends on which output mode(s) the user selected in Step 1.5.
 
 **Single joined file only:**
 ```bash
-python3 executors/video/apply_cuts.py "workspace/temp/<STEM>/cut_spec.json" "workspace/output/<STEM>/{source_stem}_trimmed{ext}" --temp-dir "workspace/temp/<STEM>" --mode joined
+python3 executors/video/apply_cuts.py "workspace/temp/video/<PROJECT>/cut_spec.json" "workspace/output/video/<PROJECT>/{source_stem}_trimmed{ext}" --temp-dir "workspace/temp/<STEM>" --mode joined
 ```
 
 **Video project only:**
 ```bash
-python3 executors/video/apply_cuts.py "workspace/temp/<STEM>/cut_spec.json" "workspace/output/<STEM>/clips" --temp-dir "workspace/temp/<STEM>" --mode project
+python3 executors/video/apply_cuts.py "workspace/temp/video/<PROJECT>/cut_spec.json" "workspace/output/video/<PROJECT>/clips" --temp-dir "workspace/temp/<STEM>" --mode project
 ```
 
 **Both** (single command — extracts segments once, produces both outputs):
 ```bash
-python3 executors/video/apply_cuts.py "workspace/temp/<STEM>/cut_spec.json" "workspace/output/<STEM>/clips" --temp-dir "workspace/temp/<STEM>" --mode both --joined-output "workspace/output/<STEM>/{source_stem}_trimmed{ext}"
+python3 executors/video/apply_cuts.py "workspace/temp/video/<PROJECT>/cut_spec.json" "workspace/output/video/<PROJECT>/clips" --temp-dir "workspace/temp/<STEM>" --mode both --joined-output "workspace/output/video/<PROJECT>/{source_stem}_trimmed{ext}"
 ```
 
 For `project` and `both` modes, the positional output argument is the **clips directory**
@@ -257,7 +175,7 @@ For `project` and `both` modes, the positional output argument is the **clips di
 **`joined`**:
 ```
 Trim complete!
-Output:  workspace/output/interview/interview_trimmed.mp4
+Output:  workspace/output/video/20260303_interview/interview_trimmed.mp4
 Before:  8m 44s  →  After: 7m 32s  (1m 12s removed)
 Size:    245 MB
 ```
@@ -265,11 +183,11 @@ Size:    245 MB
 **`project`**:
 ```
 Trim complete! Video project ready:
-  Project: workspace/output/interview/clips/interview_project.xml
+  Project: workspace/output/video/20260303_interview/clips/interview_project.xml
   Clips:
-    1. workspace/output/interview/clips/clip_001.mp4
-    2. workspace/output/interview/clips/clip_002.mp4
-    3. workspace/output/interview/clips/clip_003.mp4
+    1. workspace/output/video/20260303_interview/clips/clip_001.mp4
+    2. workspace/output/video/20260303_interview/clips/clip_002.mp4
+    3. workspace/output/video/20260303_interview/clips/clip_003.mp4
 Before:  8m 44s  →  After: 7m 32s  (1m 12s removed)
 
 Import the .xml file in Premiere Pro via File → Import.
@@ -279,12 +197,12 @@ Import the .xml file in Premiere Pro via File → Import.
 ```
 Trim complete!
 
-Joined:  workspace/output/interview/interview_trimmed.mp4  (245 MB)
-Project: workspace/output/interview/clips/interview_project.xml
+Joined:  workspace/output/video/20260303_interview/interview_trimmed.mp4  (245 MB)
+Project: workspace/output/video/20260303_interview/clips/interview_project.xml
   Clips:
-    1. workspace/output/interview/clips/clip_001.mp4
-    2. workspace/output/interview/clips/clip_002.mp4
-    3. workspace/output/interview/clips/clip_003.mp4
+    1. workspace/output/video/20260303_interview/clips/clip_001.mp4
+    2. workspace/output/video/20260303_interview/clips/clip_002.mp4
+    3. workspace/output/video/20260303_interview/clips/clip_003.mp4
 
 Before:  8m 44s  →  After: 7m 32s  (1m 12s removed)
 
@@ -301,21 +219,20 @@ returns `elapsed_seconds` in its JSON output — collect these and display:
 
 ```
 Timing:
-  Audio cleanup:   32.4s
-  Transcription:   48.1s
-  Cutting:         15.7s
-  ─────────────────────
-  Total:           96.2s
+  Transcription:   48.1s  (48s)
+  Cutting:         15.7s  (16s)
+  ─────────────────────────────────
+  Total:           63.8s  (1m 4s)
 ```
 
-If audio cleanup was skipped, omit that line. The "Total" is the sum of all
-executor times (cleanup overlaps with transcription + alignment, so wall-clock
-time may be shorter — note this if relevant).
+Format rule: if under 60s show `Xs` (e.g. `48s`), if 60s or more show `Xm Xs` (e.g. `1m 4s`).
+
+The "Total" is the sum of all executor times.
 
 ---
 
 ## Post-Processing Note
 
-The `workspace/temp/<STEM>/` files (transcript.json, cut_spec.json) are kept
+The `workspace/temp/video/<PROJECT>/` files (transcript.json, cut_spec.json) are kept
 in place so the user can review them. Tell the user they can safely delete the
-`workspace/temp/<STEM>/` folder once they're happy with the output.
+`workspace/temp/video/<PROJECT>/` folder once they're happy with the output.

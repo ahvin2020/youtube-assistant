@@ -9,7 +9,7 @@ This directive supports two modes:
 - **Script-Guided Mode** (`script_mode = true`) — user provides a script; semantic alignment determines what to keep
 
 The orchestrator sets the mode. Apply only the rules for the active mode, plus all
-shared rules (output format, validation, audio cleanup, Whisper artefacts).
+shared rules (output format, validation, Whisper artefacts).
 
 ---
 
@@ -61,7 +61,7 @@ conveys the content without restarting or breaking off.
 ## Mode: Script-Guided (script provided)
 
 > Apply this section when `script_mode = true`.
-> The script file is at `workspace/temp/<STEM>/script.txt`.
+> The script file is at `workspace/temp/video/<PROJECT>/script.txt`.
 
 ### Step 1 — Parse the Script Into Spoken Sections
 
@@ -122,12 +122,62 @@ For each script section:
 Any transcript segments that do not match ANY script section are **off-script**.
 Remove them with reason `"off-script — does not match any script section"`.
 
-**Exception — brief natural transitions**: If an off-script segment is:
+**Exception 1 — brief natural transitions**: If an off-script segment is:
 - Less than 3 seconds long, AND
 - Sits between two kept segments, AND
 - Is a natural transition phrase (e.g. "okay so", "now", "alright", "moving on")
 
 ...then KEEP it. These provide natural pacing between sections.
+
+**Exception 2 — garbled script content**: Before classifying ANY segment adjacent to a
+keep segment as off-script, check whether it could be a **garbled version** of text that
+IS in the script. Whisper frequently garbles:
+- Transition words: "but anyway" → "a way", "furthermore" → gibberish,
+  "and lastly" → "and finally"
+- Opening phrases of the next script section
+- Closing phrases of the previous script section
+
+If an adjacent removed segment's meaning (even when garbled) matches text from the
+neighbouring script section, it is NOT off-script — it is part of the delivery. KEEP it.
+
+### Step 4b — Verify Opening and Closing Phrases
+
+After determining the keep segments for each script section, verify that the **first few
+words** and **last few words** of each script section are actually captured in the audio.
+
+**Opening phrase check:**
+For each script section, compare its first 3–6 words against the start of the kept
+transcript segment. If the script section opens with words (e.g. "By default", "However",
+"But anyway", "In fact", "And lastly", "Furthermore") that are NOT present in the first
+transcript segment of the keep range:
+1. Check the transcript segment(s) immediately BEFORE the keep range start — the opening
+   words may sit in an earlier segment that was excluded
+2. If found, extend the keep segment start backward to capture the opening phrase
+3. If no transcript segment exists, extend the keep segment start by up to 1.5s — Whisper
+   often omits the first word of a segment, but the audio is still there
+
+**Closing phrase check:**
+For each script section, compare its last 3–6 words against the end of the kept transcript
+segment. If the script section ends with words (e.g. "yourself", "let's find out",
+"ho seh bo", "touch wood ah") that are NOT present in the final transcript segment:
+1. Check the transcript segment(s) immediately AFTER the keep range end
+2. If found, extend the keep segment end forward to capture the closing phrase
+3. If no transcript segment exists, extend the keep segment end by up to 1.5s — the
+   presenter may have spoken words that Whisper did not transcribe
+
+This step catches phrases that Whisper truncated, garbled, or missed entirely.
+
+### Step 4c — Verify Sentence Completeness
+
+Each keep segment should contain **complete sentences**, not partial ones. If a keep
+segment starts or ends mid-sentence:
+1. Check whether the missing part is in an adjacent removed segment
+2. If so, either include that segment or extend the keep boundary
+3. A sentence that the script shows as continuous should not be split across a gap
+
+**Bridging phrases**: When content from the script logically connects two sections
+(e.g. "...investing the difference yourself? Let us not waste any time..."), ensure
+the connecting words are not lost in the gap between keep segments.
 
 ### Step 5 — Handle Unmatched Script Sections
 
@@ -143,13 +193,50 @@ Even in script-guided mode, apply retake detection within matched sections:
   the keep_segment to exclude them (same within-segment validation rules apply)
 - The "keep the final take" rule from retake-only mode applies identically here
 
+### Step 6 — Systematic Internal Retake Scan (MANDATORY)
+
+After assembling ALL keep segments, perform a **systematic scan of every keep segment**
+for internal retakes. This is the most common source of errors and MUST be done
+for every segment, not just ones that "look suspicious".
+
+**For each keep segment:**
+1. List every transcript segment that falls within the keep range
+2. Read the text of each transcript segment in order
+3. Check for ANY phrase of 4+ words that appears more than once within the range
+4. Common internal retakes to watch for:
+   - Presenter says a phrase, stumbles, then says the same phrase again cleanly
+   - Whisper may garble the first attempt (e.g. "top up" → "pop up") making it
+     look different, but the meaning is the same — both are retakes
+   - The retake may be slightly different wording but convey the same content
+5. When an internal retake is found: **split the keep segment** to exclude the
+   earlier attempt. Keep only the FINAL delivery of the repeated phrase.
+
+**This scan must cover every keep segment without exception.** A keep segment that
+spans more than 10 seconds of transcript is especially likely to contain internal
+retakes and deserves extra scrutiny.
+
+### Step 7 — Verify Fixes Don't Introduce New Problems
+
+When extending or adding segments to capture missing content:
+
+1. **Never keep both takes** — if extending a segment to include a missing word (e.g.
+   "yourself") means overlapping with the original delivery, REPLACE the original
+   with the take that includes the missing word. Do not concatenate both.
+2. **After trimming, verify no script content was lost** — after trimming a segment to
+   remove a duplicate, re-check that the remaining segment still covers all the
+   script content it's supposed to. If trimming removed script content, the trim
+   went too far.
+3. **After extending, check for internal retakes** — an extended segment may now
+   contain a repeated phrase. Re-run the internal retake scan (Step 6) on any
+   segment that was modified.
+
 ---
 
 ## Shared Rules (Both Modes)
 
 ### Output Format
 
-Generate `workspace/temp/<source_stem>/cut_spec.json` with this structure:
+Generate `workspace/temp/video/<PROJECT>/cut_spec.json` with this structure:
 
 ```json
 {
@@ -209,6 +296,31 @@ within that range**. Do not treat merged blocks as automatically clean.
 and G > 0.5s, always split into two separate keep_segments ending at A and starting at B.
 Never bridge a gap > 0.5s inside a keep_segment.
 
+3. **Duplicate phrases at segment boundaries** — after assembling all keep segments,
+   check every pair of consecutive keep segments for **repeated phrases**. The end of
+   segment N and the start of segment N+1 must not contain the same words.
+
+   Common patterns:
+   - A false start at the end of segment N repeats the opening of segment N+1
+     (e.g. both end/start with "now", "the second", "here", "because", "while the")
+   - A retake within a keep segment where the presenter says a phrase, restarts,
+     and says it again — only the final delivery should be kept
+
+   **For each pair of consecutive keep segments:**
+   - Read the last 1–2 transcript segments in the first keep range
+   - Read the first 1–2 transcript segments in the next keep range
+   - If they contain the same phrase (even partially), trim the earlier one to
+     exclude the duplicate. Favour keeping the later (cleaner) delivery.
+
+   **Also check within each keep segment:** If the same phrase appears twice
+   inside a single keep segment (internal retake), split the segment to exclude
+   the earlier occurrence.
+
+   **Padding bleed awareness:** The executor adds ±0.1s padding. If two keep segments
+   are separated by less than 0.5s, content in the gap may "bleed" into both via
+   padding. When segments are this close, check whether the gap contains a false
+   start that would be captured by padding, and extend the gap if needed.
+
 **Example (correct):**
 ```json
 { "start": "00:01:29.389", "end": "00:01:48.035", "note": "...Le Freeport here in Singapore" },
@@ -231,6 +343,11 @@ NOT:
 - [ ] Every transcript segment within each kept range has been individually examined
 - [ ] No keep_segment bridges a silence gap > 0.5s (split at the gap instead)
 - [ ] (Script-guided only) Every script section has at least one kept delivery OR is flagged as unmatched
+- [ ] (Script-guided only) Opening phrase of each script section is captured in the keep range (Step 4b)
+- [ ] (Script-guided only) Closing phrase of each script section is captured in the keep range (Step 4b)
+- [ ] No duplicate phrases exist at consecutive keep segment boundaries (Step within-segment validation #3)
+- [ ] No adjacent removed segment contains garbled versions of script content (Step 4 Exception 2)
+- [ ] Each keep segment contains complete sentences, not partial ones (Step 4c)
 
 ### User Review (Auto-Accept)
 
@@ -250,47 +367,12 @@ If no retakes are detected, tell the user and proceed without edits (produce unc
 - If the source video file does not exist: stop immediately, do not call any executor
 - If the script file is missing when `script_mode = true`: stop and tell the user to provide the script again
 
-### Audio Cleanup (Pre-Processing)
-
-When the user opts for audio cleanup (Step 0 in the orchestrator):
-
-- **Auto-detect preset** — run `--analyze` first and use the `recommended_preset` from the output
-- `voice` — suitable for most talking-head recordings (moderate denoise)
-- `light` — recording environment is already good (minor level tweaks only)
-- `heavy` — significant background noise or reverb (aggressive denoise)
-- The user can override the auto-detected preset by explicitly requesting one
-- The cleaned file goes to `workspace/temp/<STEM>/`, NOT `workspace/output/`
-- The original input file is **NEVER modified**
-- All subsequent pipeline steps (transcription, cuts) use the cleaned file as the source
-- The cleaned audio is an intermediate artifact — the final output from `apply_cuts.py` inherits the cleaned audio
-
-#### Pipeline Stages
-The executor uses a multi-stage pipeline:
-1. Extract audio to 48kHz mono WAV
-2. Process: highpass → arnndn (RNNoise ML denoiser) → deesser → compressor → gate → limiter
-3. Two-pass loudnorm: measure loudness, then apply linear normalization
-4. Mux processed audio back with original video (`-c:v copy`)
-
-#### Denoise Backends
-- **arnndn** (default) — RNNoise neural model built into ffmpeg. Auto-downloads a 3MB model on first use to `~/.cache/clean_audio/cb.rnnn`
-- **afftdn** (fallback) — basic FFT denoiser. Used automatically if arnndn model download fails
-- Override with `--denoise-backend arnndn|afftdn`
-
-#### Analyze Mode
-Run `--analyze` to inspect audio before cleaning:
-```
-python3 executors/video/clean_audio.py --analyze <input>
-```
-Returns loudness measurements and a recommended preset without processing the file.
-
----
-
 ### Whisper Transcription Artefacts
 
 Whisper frequently garbles **colloquial, dialect, or code-switched speech** — especially
 Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "alamak",
-"can or not", etc.  These appear as nonsense text (e.g. "Shion no a go so much" for
-"wah, sure or not").
+"can or not", "ho seh bo", "touch wood", "sibeh", "sian", etc.  These appear as nonsense
+text (e.g. "Shion no a go so much" for "wah, sure or not") or are **not transcribed at all**.
 
 **Before classifying any segment as "garbled / off-topic":**
 
@@ -300,6 +382,51 @@ Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "ala
    likely misheard colloquial speech than genuine off-topic content.
 3. When in doubt, **keep the segment** — a few extra seconds of genuine speech is far
    less damaging than cutting off the presenter mid-reaction.
+
+**Untranscribed speech (gaps where Whisper produced nothing):**
+
+Whisper sometimes produces NO transcript segment at all for colloquial expressions.
+This creates a silence gap in the transcript, but the audio actually contains speech.
+
+When the **script** contains a colloquial expression (e.g. "ho seh bo", "touch wood ah",
+"wah") at the end or start of a section:
+1. Check if there is a gap in the transcript at the corresponding point
+2. If so, extend the keep segment by up to 2s into the gap to capture the
+   untranscribed speech
+3. The script is the ground truth for what was said — trust it over Whisper's gaps
+
+**Executor bridge awareness when inserting segments in gaps:**
+
+`apply_cuts.py` automatically bridges gaps < 1.0s between consecutive keep segments
+(see `MIN_INTER_SEGMENT_GAP` in the executor). This means if you insert a keep segment
+for untranscribed speech and the gap between it and the previous keep segment is < 1.0s,
+the executor will bridge the gap — re-including any false starts or retakes you intended
+to exclude.
+
+**When adding a segment for untranscribed speech in a gap that also contains a false start:**
+1. Place the new segment so its start is at least **1.0s** after the end of the
+   previous keep segment. This prevents the executor from bridging and re-including
+   the false start.
+2. If the untranscribed expression is less than 1.0s after the previous segment,
+   you may need to estimate where the false start ends and where the expression
+   begins. Set the new segment start after the false start, with ≥ 1.0s gap from
+   the previous segment.
+3. The gap between the new segment and the NEXT keep segment can be < 1.0s — bridging
+   is fine here if the gap only contains silence or natural pauses.
+
+**Example:** Whisper gap from 835.809 to 839.116 contains both a "the second" false
+start (~836.0-836.5) and "Touch wood ah" (~837.0-838.3). Previous segment ends at
+835.809, next segment starts at 839.116. To capture only "Touch wood ah":
+- Set new segment start at 837.000 (gap from 835.809 = 1.191s ≥ 1.0 → no bridge)
+- Set new segment end at 838.300
+- The gap from 838.300 to 839.116 = 0.816s → bridged (OK, just silence)
+
+**Whisper phantom segments:**
+
+Whisper also generates hallucinated segments — typically 1-second segments at regular
+intervals (e.g. every N.821s) containing generic text like "OK", "All right", "Bye",
+"Thank you", "Here we go", "I'll see you". These are NOT real speech. Ignore them
+when determining segment boundaries. They are artefacts from background music or silence.
 
 ---
 
@@ -313,3 +440,6 @@ Singlish expressions like "wah", "sure or not", "lah", "leh", "sia", "hor", "ala
 - **Do not assume a silence gap within a kept block is empty** — the transcriber (Whisper) can miss brief utterances
 - **Do not classify colloquial/dialect speech as garbled** — Whisper often misheards Singlish; see "Whisper Transcription Artefacts" above
 - **(Script-guided only) Do not remove content solely because the wording differs from the script** — match by MEANING, not exact words
+- **Do not classify transition phrases that appear in the script as "off-script"** — words like "but anyway", "and lastly", "however", "in fact", "furthermore" are often garbled by Whisper but are part of the actual script. Always check the script before removing.
+- **Do not set keep segment boundaries so tightly that opening/closing words are lost** — Whisper timestamps can be late by up to 0.5s for the first word of a segment. Extend boundaries when the script shows words the transcript doesn't capture.
+- **Do not leave duplicate phrases at consecutive keep segment boundaries** — if the end of keep segment N and the start of keep segment N+1 contain the same words, trim the earlier one.

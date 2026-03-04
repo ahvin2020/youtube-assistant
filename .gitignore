@@ -15,5 +15,12 @@ workspace/output/*
 !workspace/output/.gitkeep
 workspace/temp/
 
+# Generated config (rebuilt by channel-profile pipeline)
+workspace/config/channel.json
+workspace/config/research_sheet.json
+
+# ML model binaries (download separately)
+executors/thumbnail/models/
+
 # Google OAuth credentials (rename credentials.sample.json and fill in your keys)
 credentials.json
