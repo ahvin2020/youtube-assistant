@@ -88,7 +88,7 @@ inform the user.
 Before research begins, verify a channel profile exists at
 `memory/channel-profile.md`. This profile is built on first use by analyzing
 the user's recent video titles and transcripts. It provides:
-- **Niche terms** for cross-niche filtering (populated in `cross_niche.json`)
+- **Niche terms** for cross-niche filtering (populated in `research_config.json`)
 - **Tone profile** for script writing (shared with /write pipeline)
 - **Performance baseline** for context
 
@@ -114,7 +114,7 @@ excluded. Only genuine outliers — videos performing significantly above their
 channel's average — are kept.
 
 Each run samples different keywords and channels for variety. Config lives at
-`workspace/config/cross_niche.json`.
+`workspace/config/research_config.json`.
 
 The search uses:
 - `--exclude-channel` (from channel profile Identity section)
@@ -168,7 +168,7 @@ Percentage boosts applied based on the video's title content (keyword matching):
 | Monitored channel | +25% | video is from a channel in `monitored_channels` |
 
 Full term lists for each category are defined in
-`workspace/config/cross_niche.json` under `hook_categories`.
+`workspace/config/research_config.json` under `hook_categories`.
 
 The executor scans the video title for matching terms from each category.
 Multiple positive categories can stack. Only one modifier of each type is

@@ -36,6 +36,7 @@ workspace/output/<domain>/          ← your files land here
 | `/cut` | Built | Transcribe + align + cut video to match a script |
 | `/write` | Built | Research topics, outline, and draft scripts with tone matching |
 | `/thumbnail` | Built | Cross-niche research + AI thumbnail generation with face replacement |
+| `/topics` | Built | Discover high-performing topics from YouTube, Google Trends, Reddit, and social platforms |
 | `/post` | Stub | Upload to YouTube via Data API v3 |
 
 ---
@@ -65,6 +66,11 @@ pip install python-docx google-api-python-client google-auth-httplib2 google-aut
 ### For `/thumbnail` pipeline
 ```bash
 pip install Pillow google-genai mediapipe opencv-contrib-python
+```
+
+### For `/topics` pipeline
+```bash
+pip install pytrends
 ```
 
 ---
@@ -102,7 +108,7 @@ workspace/
   input/              ← source media and headshots (gitignored)
   output/             ← final processed files (gitignored)
   temp/               ← intermediate files (gitignored)
-  config/             ← cross-niche research config
+  config/             ← scoring rules, filters, thresholds
 ```
 
 ---
@@ -126,6 +132,14 @@ Claude will:
 2. Claude researches YouTube videos on the topic, fetches transcripts, and builds a brief
 3. Iterative workflow: Research → Outline → Script draft
 4. Final script exported to Google Docs
+
+### `/topics` — Discover content topics
+
+1. Run `/topics` (optionally with `longform`, `shorts`, or `both`)
+2. Claude gathers data from YouTube competitors, Google Trends, Reddit, and social platforms in parallel
+3. An Opus subagent clusters, scores, and analyzes topics
+4. Results exported to a Google Sheet with long-form and shorts scores
+5. Interactive refinement: deep dive into specific topics or search for more
 
 ### `/thumbnail` — Design thumbnails
 
@@ -155,7 +169,7 @@ workspace/
   input/                ← source media and headshots (gitignored)
   output/               ← final processed files (gitignored)
   temp/                 ← intermediate files (gitignored)
-  config/               ← cross-niche keywords, monitored channels
+  config/               ← scoring rules, filters, thresholds
 ```
 
 ---
@@ -163,3 +177,4 @@ workspace/
 ## Roadmap
 
 - [ ] `/post` — upload and schedule videos via YouTube Data API v3
+- [ ] `/topics` historical tracking — compare topic trends over time

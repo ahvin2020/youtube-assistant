@@ -13,7 +13,7 @@ the user reviews, challenges, adds to, and refines your work at every step.
 
 ## Video Formats
 
-The user produces two formats. The chosen format affects research depth, outline
+The user produces several formats. The chosen format affects research depth, outline
 structure, and script length throughout the pipeline.
 
 ### Long-Form (10+ minutes)
@@ -34,6 +34,19 @@ structure, and script length throughout the pipeline.
 - Extract one sharp angle from the long-form research
 - Each reel gets its own outline and script file (`reel-1.md`, `reel-2.md`, etc.)
 - Multiple reels can be spun off from a single long-form project
+
+### Brand-Mention (Sponsored Segments)
+- **Two placement types**:
+  - **Mid-roll**: A sponsored segment within a longer video (~60 seconds, ~100–200 words)
+  - **Standalone**: A full sponsored short-form video (~60–90 seconds, ~150–250 words)
+- No research phase — the brand provides all necessary information
+- Input ranges from minimal (just a product name) to detailed (full brief with mandatory
+  phrases, dos/don'ts, key talking points)
+- Must track **mandatory requirements** (product name, promo code, key features, mandatory
+  phrases, dos/don'ts) and validate the script hits all of them before finalization
+- Tone must feel natural and organic — aim for "genuine recommendation from a friend",
+  not a commercial read. Match the channel's existing sponsor integration style
+- Never fabricate product claims — only state what the brand brief provides
 
 ---
 
@@ -224,6 +237,8 @@ All output goes to a **single markdown file per phase** in the project directory
 1. <angle 1 — brief description>
 2. <angle 2>
 3. <angle 3>
+4. <angle 4>
+5. <angle 5>
 
 ## Sources
 <full list with tier labels>
@@ -269,6 +284,67 @@ All output goes to a **single markdown file per phase** in the project directory
 
 Short-form outlines are intentionally minimal. Do not add sections beyond these
 three unless the user asks for them. The constraint is the point.
+
+### Outline — Brand-Mention Mid-Roll (`outline.md`)
+
+```markdown
+# Brand Mention Outline: <Product/Brand>
+**Format**: Brand-mention (mid-roll)  |  **Target Length**: ~60s (~100–200 words)  |  **Status**: In Progress / Approved
+
+## Transition In
+- <how to bridge from the main video topic to the sponsor — must feel contextual>
+
+## Problem / Need
+- <what pain point or need does the product address? Frame from viewer's perspective>
+
+## Product Introduction
+- <product name, what it is, key value proposition — one sentence>
+
+## Key Features (pick 2–3 max)
+- <feature 1 — tied to the viewer's need>
+- <feature 2>
+- <feature 3 — optional>
+
+## Personal Touch
+- <creator's personal experience, opinion, or specific use case>
+
+## CTA
+- <promo code, link, or specific action — one clear ask>
+
+## Transition Out
+- <how to return to the main video — should feel seamless>
+```
+
+### Outline — Brand-Mention Standalone (`outline.md`)
+
+```markdown
+# Brand Mention Outline: <Product/Brand>
+**Format**: Brand-mention (standalone)  |  **Target Length**: ~60–90s (~150–250 words)  |  **Status**: In Progress / Approved
+
+## Hook (first 3 seconds)
+- <attention-grabbing opening — NOT "this video is sponsored by" — start with the problem>
+
+## Problem / Need
+- <what pain point does this solve? Make the viewer feel it>
+
+## Product Introduction
+- <product name, what it is, key value proposition>
+
+## Key Features (pick 2–3 max)
+- <feature 1 — tied to the viewer's need>
+- <feature 2>
+- <feature 3 — optional>
+
+## Personal Touch
+- <creator's personal experience, specific use case, or opinion>
+
+## CTA / Payoff
+- <promo code, link, specific action — make it compelling>
+```
+
+Brand-mention outlines are structured around the product's value proposition. The
+"Transition In" and "Transition Out" sections are only for mid-roll (they bridge the
+sponsor into the main video). Standalone uses a hook instead.
 
 ### Script — Long-Form (`script.md`)
 
@@ -335,6 +411,36 @@ Short-form scripts are written as a single flowing piece, not broken into sectio
 Every word counts — read it back and cut anything that doesn't move the viewer
 toward the payoff.
 
+### Script — Brand-Mention (`script.md`)
+
+```markdown
+# Brand Mention Script: <Product/Brand>
+**Format**: Brand-mention (<mid-roll | standalone>)  |  **Based on**: outline.md  |  **Tone**: <tone profile or override>
+**Word count**: <target>
+
+---
+
+## Requirements Checklist
+- [ ] Product name mentioned: <product name>
+- [ ] Promo code / link included: <code/link>
+- [ ] Key features covered: <feature 1>, <feature 2>, ...
+- [ ] Mandatory phrases included: <phrase 1>, <phrase 2>, ...
+- [ ] Dos observed: <do 1>, <do 2>, ...
+- [ ] Don'ts avoided: <don't 1>, <don't 2>, ...
+
+---
+
+<full script text — written as one continuous piece>
+```
+
+Brand-mention scripts include a **Requirements Checklist** at the top. Each item maps
+to the brand brief's mandatory elements. After writing and after each revision,
+re-validate the script against this checklist and update the check marks. All items
+must be checked before the script can be finalized.
+
+Omit checklist rows for categories the brand brief didn't provide (e.g., if there
+are no mandatory phrases, omit that row entirely).
+
 ---
 
 ## What NOT to Do
@@ -346,6 +452,9 @@ toward the payoff.
 - Do not fabricate statistics or data points — if you can't find data, say so
 - Do not reimplement what `fetch_transcript.py` does — call the executor
 - Do not delete or overwrite `brief.md` when updating — append or edit in place
+- Do not fabricate product claims in brand-mention scripts — only state what the brand brief provides
+- Do not skip requirements checklist validation before finalizing brand-mention scripts
+- Do not use em dashes (—) in scripts — scripts are spoken aloud, not read. Use periods, commas, or line breaks instead. Em dashes are fine in briefs and outlines (written documents), but never in script.md output.
 
 ---
 
@@ -386,14 +495,15 @@ toward the payoff.
 ## Google Docs Export
 
 ### When to Offer
-- After the user says "script done" (long-form or short-form), before the completion summary
+- After the user says "script done" (long-form, short-form, or brand-mention), before the completion summary
 - After the user says "reels done" (spin-off reels), before the completion summary
 - Do NOT offer export during iterative loops — only at finalization
 
 ### Rules
 - Always ask before exporting — never auto-export
 - Use the executor: `executors/research/export_google_doc.py` — do not reimplement
-- Document title: `"Script: <topic>"` (or `"Reel <N>: <topic>"` for spin-offs)
+- Document title: `"Script: <topic>"` (or `"Reel <N>: <topic>"` for spin-offs,
+  or `"Brand Mention: <product/brand>"` for brand-mention)
 - If `credentials.json` is missing, provide setup instructions and proceed without export
 - If export fails for any reason, inform the user and proceed — the local file is always
   the source of truth

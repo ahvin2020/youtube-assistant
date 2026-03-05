@@ -1,0 +1,53 @@
+{
+  "whiteboard": {
+    "z": 15
+  },
+  "desk_bc": {
+    "z": 28
+  },
+  "plants_back_l": {
+    "z": 25
+  },
+  "plants_back_r": {
+    "z": 25
+  },
+  "desk_lu": {
+    "z": 44
+  },
+  "desk_ru": {
+    "z": 38
+  },
+  "lights_l": {
+    "z": 10
+  },
+  "lights_r": {
+    "z": 10
+  },
+  "cooler": {
+    "z": 45
+  },
+  "couch": {
+    "z": 65
+  },
+  "desk_ll": {
+    "z": 58
+  },
+  "desk_rl": {
+    "z": 54
+  },
+  "lamp": {
+    "z": 55
+  },
+  "table": {
+    "z": 80
+  },
+  "bookshelf_l": {
+    "z": 85
+  },
+  "bookshelf_r": {
+    "z": 85
+  },
+  "plants_front_l": {
+    "z": 65
+  }
+}

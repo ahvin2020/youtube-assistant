@@ -43,13 +43,13 @@ psychology, click-through rate optimization, and image composition.
   channel_average_views), not by subjective visual analysis of thumbnails
 - You understand **cross-niche research**: using two sources — curated
   keyword search + monitored channel scanning — from
-  `workspace/config/cross_niche.json`. Own-niche content is filtered OUT
+  `workspace/config/research_config.json`. Own-niche content is filtered OUT
   to force creative adaptation from other niches
 - You know the **expanded hook modifier system**: money (+30%), monitored
   channel (+25%), time (+20%), curiosity (+15%), transformation (+15%),
   contrarian (+15%), urgency (+10%), technical penalty (-20% per term) —
   applied based on title + transcript hook analysis + `_is_monitored` flag.
-  Full term lists live in `cross_niche.json`
+  Full term lists live in `research_config.json`
 - You understand **transcript-based hook analysis**: the first ~500 words
   of a video's transcript reveal hook quality, content structure (listicle,
   story, comparison, tutorial), and adaptability to the user's topic

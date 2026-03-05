@@ -95,7 +95,8 @@ compute elapsed time. Report it in `Xm Ys` format (e.g., `3m 42s`).
 ```bash
 python3 executors/thumbnail/cross_niche_research.py \
   "workspace/temp/thumbnail/<PROJECT>/research/cross_niche/" \
-  --config workspace/config/cross_niche.json \
+  --config workspace/config/research_config.json \
+  --channel-profile memory/channel-profile.md \
   --max-keywords 6 --max-channels 8 --count 100 \
   --min-outlier 1.5 \
   --exclude-channel <channel_id> \
@@ -131,7 +132,10 @@ This is done by Claude (you) directly — no external API calls needed.
    read all transcript files (first 4000 chars) and embed the text directly into
    the batch JSON. This way each subagent needs only 1 Read call instead of 11.
    Save batch files to `batch_0.json`, `batch_1.json`, etc. in the research dir.
-3. Launch **parallel subagents** (batches of ~10 videos each, using **Sonnet** model).
+3. Launch **parallel subagents** (batches of ~10 videos each, using **Haiku** model —
+   this is mechanical title variant generation, not reasoning).
+   **IMPORTANT — Parallel execution**: All batch subagents must be launched in a
+   **single message** so they run concurrently. Do NOT launch them one at a time.
    Pass each subagent its batch file path. Each subagent reads one file and generates:
    - **Title variants**: 3 titles adapted to the user's topic, inspired by the
      reference title's hook structure
@@ -229,10 +233,13 @@ Wait for the user to pick 5 references.
 ### 3c. Auto-Suggest Headshot + Text
 
 For each selected reference, run `match_headshot.py` to find the best
-pose match, then suggest text based on the reference + topic:
+pose match, then suggest text based on the reference + topic.
+
+**IMPORTANT — Parallel execution**: All 5 `match_headshot.py` calls must be
+launched in a **single message** as separate Bash tool calls so they run
+concurrently. Do NOT run them sequentially.
 
 ```bash
-# Run all 5 in parallel
 /opt/homebrew/bin/python3 executors/thumbnail/match_headshot.py \
     --reference "<reference_thumbnail_path>" \
     --headshots-dir "workspace/input/thumbnail/headshots/" \
@@ -385,8 +392,12 @@ GENERATION COST:
 
 ### 4b. Generate Face-Replaced Images (with Text)
 
-For each selected reference, run in parallel using the reverse-engineered
-prompt from Step 3d (which includes text instructions):
+**IMPORTANT — Parallel execution**: All 5 `replace_face.py` calls must be
+launched in a **single message** as separate Bash tool calls so they run
+concurrently. Each Gemini image generation takes 15-30s; parallel cuts total
+time from ~2 minutes to ~30 seconds.
+
+For each selected reference, use the reverse-engineered prompt from Step 3d:
 
 ```bash
 /opt/homebrew/bin/python3 executors/thumbnail/replace_face.py \

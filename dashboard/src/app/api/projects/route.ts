@@ -1,0 +1,9 @@
+import { NextResponse } from "next/server";
+import { getAllProjects } from "@/lib/workspace";
+
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  const projects = await getAllProjects();
+  return NextResponse.json(projects);
+}

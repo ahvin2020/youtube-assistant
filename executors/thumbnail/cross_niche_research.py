@@ -12,7 +12,7 @@ Two sources of cross-niche content:
 
 Usage:
     python3 executors/thumbnail/cross_niche_research.py <output_dir> \
-        [--config workspace/config/cross_niche.json] \
+        [--config workspace/config/research_config.json] \
         [--max-keywords 6] [--max-channels 8] [--count 100] \
         [--min-outlier 1.5] [--exclude-channel UC...]
 
@@ -32,79 +32,13 @@ import sys
 import time
 import urllib.request
 import urllib.error
-from datetime import date, datetime
 from typing import Optional
 
-
-# ---------------------------------------------------------------------------
-# YouTube search & metadata
-# ---------------------------------------------------------------------------
-
-def search_youtube(query: str, count: int) -> list[dict]:
-    """Search YouTube via yt-dlp and return full video metadata."""
-    cmd = [
-        "yt-dlp",
-        f"ytsearch{count}:{query}",
-        "--dump-json",
-        "--no-download",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp search failed: {result.stderr.strip()}")
-
-    videos = []
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        vid = {
-            "video_id": data.get("id"),
-            "title": data.get("title"),
-            "channel": data.get("channel") or data.get("uploader"),
-            "channel_id": data.get("channel_id"),
-            "channel_subscribers": data.get("channel_follower_count"),
-            "channel_verified": data.get("channel_is_verified", False),
-            "view_count": data.get("view_count"),
-            "like_count": data.get("like_count"),
-            "comment_count": data.get("comment_count"),
-            "upload_date": data.get("upload_date"),
-            "duration": data.get("duration"),
-        }
-        videos.append(vid)
-    return videos
-
-
-def enrich_video(vid: dict) -> dict:
-    """Add computed fields to a video entry."""
-    views = vid.get("view_count") or 0
-    subs = vid.get("channel_subscribers") or 0
-    likes = vid.get("like_count") or 0
-    vid["views_per_subscriber"] = round(views / subs, 2) if subs > 0 else None
-    vid["like_view_ratio"] = round(likes / views, 4) if views > 0 else None
-
-    duration = vid.get("duration") or 0
-    if duration < 300:
-        vid["duration_category"] = "short"
-    elif duration <= 900:
-        vid["duration_category"] = "medium"
-    else:
-        vid["duration_category"] = "long"
-
-    upload = vid.get("upload_date")
-    if upload:
-        try:
-            upload_dt = datetime.strptime(upload, "%Y%m%d").date()
-            vid["days_since_upload"] = (date.today() - upload_dt).days
-        except ValueError:
-            vid["days_since_upload"] = None
-    else:
-        vid["days_since_upload"] = None
-
-    return vid
+_EXECUTORS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EXECUTORS_DIR not in sys.path:
+    sys.path.insert(0, _EXECUTORS_DIR)
+from shared.youtube import search_youtube, fetch_channel_recent_videos, enrich_video
+from shared.parse_profile import parse_channel_profile
 
 
 def download_thumbnail(video_id: str, output_path: str) -> Optional[str]:
@@ -223,64 +157,12 @@ def fetch_channel_average_views(channel_id: str) -> int | None:
     return int(sum(view_counts) / len(view_counts))
 
 
-def fetch_channel_recent_videos(channel_id: str, channel_name: str,
-                                max_videos: int = 10) -> list[dict]:
-    """Fetch recent videos from a monitored channel.
-
-    Uses --flat-playlist for speed. Returns video dicts in the same format
-    as search_youtube().
-    """
-    url = f"https://www.youtube.com/channel/{channel_id}/videos"
-    cmd = [
-        "yt-dlp",
-        url,
-        "--flat-playlist",
-        "--dump-json",
-        "--no-download",
-        "--playlist-items", f"1:{max_videos}",
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
-    except subprocess.TimeoutExpired:
-        return []
-
-    if result.returncode != 0:
-        return []
-
-    videos = []
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        vid = {
-            "video_id": data.get("id"),
-            "title": data.get("title"),
-            "channel": channel_name,
-            "channel_id": channel_id,
-            "channel_subscribers": data.get("channel_follower_count"),
-            "channel_verified": data.get("channel_is_verified", False),
-            "view_count": data.get("view_count"),
-            "like_count": data.get("like_count"),
-            "comment_count": data.get("comment_count"),
-            "upload_date": data.get("upload_date"),
-            "duration": data.get("duration"),
-            "_source": "channel",
-            "_source_channel": channel_name,
-        }
-        videos.append(vid)
-    return videos
-
-
 # ---------------------------------------------------------------------------
 # Cross-niche specific logic
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: str) -> dict:
-    """Load cross-niche config from JSON file."""
+    """Load research config (scoring rules, filters, thresholds) from JSON."""
     if not os.path.isfile(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path) as f:
@@ -445,9 +327,9 @@ def main():
     parser.add_argument("--config",
                         default=os.path.join(
                             os.path.dirname(os.path.abspath(__file__)),
-                            "..", "..", "workspace", "config", "cross_niche.json"
+                            "..", "..", "workspace", "config", "research_config.json"
                         ),
-                        help="Path to cross_niche.json config file")
+                        help="Path to research_config.json config file")
     parser.add_argument("--max-keywords", type=int, default=6,
                         help="Number of keywords to randomly sample per run (default: 6)")
     parser.add_argument("--max-channels", type=int, default=8,
@@ -458,6 +340,12 @@ def main():
                         help="Minimum outlier score to keep (default: 1.5)")
     parser.add_argument("--exclude-channel",
                         help="YouTube channel ID to exclude (e.g., UCxxx)")
+    parser.add_argument("--channel-profile",
+                        default=os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "memory", "channel-profile.md"
+                        ),
+                        help="Path to channel-profile.md (source of niche terms)")
     args = parser.parse_args()
 
     start = time.time()
@@ -469,11 +357,15 @@ def main():
         print(json.dumps({"status": "error", "error": str(e)}))
         sys.exit(1)
 
-    keywords = config.get("cross_niche_keywords", [])
-    monitored_channels_raw = config.get("monitored_channels", {})
+    # Channel-specific config from profile
+    profile = parse_channel_profile(args.channel_profile)
+    keywords = profile.get("cross_niche_keywords", [])
+    monitored_channels_raw = profile.get("monitored_channels", {})
     monitored_channels = flatten_monitored_channels(monitored_channels_raw)
     monitored_channel_ids: set[str] = set(monitored_channels.keys())
-    own_niche_terms = config.get("own_niche_terms", [])
+    own_niche_terms = profile.get("niche_terms", [])
+
+    # System config from research_config.json
     exclude_formats = config.get("exclude_formats", [])
     constants = config.get("constants", {})
     min_subscribers = constants.get("min_subscribers", 100000)
@@ -484,7 +376,7 @@ def main():
     if not keywords and not monitored_channels:
         print(json.dumps({
             "status": "error",
-            "error": "No cross_niche_keywords or monitored_channels found in config file.",
+            "error": "No Cross-Niche Keywords or Monitored Channels found in channel profile.",
         }))
         sys.exit(1)
 
@@ -540,6 +432,9 @@ def main():
             channel_id, channel_name = channel_futures[future]
             try:
                 videos = future.result()
+                for v in videos:
+                    v["_source"] = "channel"
+                    v["_source_channel"] = channel_name
                 videos_from_channels += len(videos)
                 all_videos.extend(videos)
             except Exception as e:

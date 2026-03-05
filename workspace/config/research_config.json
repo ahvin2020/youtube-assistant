@@ -1,0 +1,132 @@
+{
+  "exclude_formats": [
+    "prank", "pranked", "pranking",
+    "react", "reacts", "reacting", "reaction",
+    "roast", "roasted", "roasting",
+    "exposed", "exposing", "drama", "beef", "cancelled",
+
+    "day in my life", "day in the life", "a day with",
+    "morning routine", "night routine", "evening routine", "my routine",
+    "what i eat", "what i ate", "full day of eating", "diet",
+    "get ready with me", "grwm", "outfit", "fashion haul", "try on",
+    "room makeover", "apartment tour", "house tour", "home tour",
+    "travel vlog", "vacation", "trip to", "visiting",
+    "wedding", "birthday", "anniversary", "holiday",
+    "workout", "gym routine", "fitness routine", "exercise",
+
+    "q&a", "ama", "ask me anything", "answering your questions",
+    "reading comments", "responding to", "replying to",
+    "shorts", "#shorts", "tiktok", "reel",
+    "clip", "clips", "highlight", "highlights", "compilation", "best of",
+    "podcast ep", "full episode", "full interview",
+    "live stream", "livestream", "streaming",
+    "behind the scenes", "bts", "how we made",
+    "bloopers", "outtakes", "deleted scenes",
+
+    "youtube algorithm", "youtube update", "monetization",
+    "subscriber", "subscribers", "sub count", "hitting",
+    "play button", "silver play", "gold play",
+    "channel update", "channel news",
+
+    "music video", "official video", "official audio", "lyric video",
+    "cover", "remix", "mashup", "acoustic",
+    "ft.", "feat.", "featuring",
+    "album", "ep release", "single",
+
+    "gameplay", "playthrough", "walkthrough", "let's play",
+    "minecraft", "fortnite", "valorant", "league", "apex",
+    "gaming", "gamer", "twitch", "esports",
+
+    "recipe", "cooking", "baking", "how to cook", "how to make",
+    "mukbang", "eating", "food review", "restaurant",
+
+    "asmr", "relaxing", "sleep", "meditation", "ambient",
+    "white noise", "rain sounds", "study music",
+
+    "dating", "relationship", "boyfriend", "girlfriend", "marriage",
+    "breakup", "ex", "crush", "love life",
+
+    "storytime", "story time", "confession",
+    "haul", "shopping haul", "favorites",
+    "empties", "monthly favorites",
+    "tier list", "ranking every"
+  ],
+
+  "technical_terms": [
+    "API", "algorithm", "framework", "SDK", "database",
+    "JavaScript", "Python", "programming", "developer", "coding",
+    "GitHub", "server", "cloud", "saas", "software",
+    "blockchain", "protocol", "smart contract",
+    "machine learning", "neural network", "deep learning",
+    "regression", "correlation", "methodology", "paradigm",
+    "infrastructure", "architecture", "deployment"
+  ],
+
+  "hook_categories": {
+    "money": {
+      "modifier": 0.30,
+      "terms": [
+        "$", "revenue", "income", "profit", "money", "earn", "cash", "wealthy",
+        "million", "millionaire", "billionaire", "rich", "wealth", "net worth",
+        "salary", "raise", "pricing", "charge more", "high ticket", "premium"
+      ]
+    },
+    "time": {
+      "modifier": 0.20,
+      "terms": [
+        "faster", "save time", "productivity", "efficient", "quick", "speed",
+        "in minutes", "in seconds", "instantly", "overnight", "shortcut",
+        "hack", "hacks", "cheat code", "fast track", "accelerate"
+      ]
+    },
+    "curiosity": {
+      "modifier": 0.15,
+      "terms": [
+        "secret", "secrets", "nobody", "no one tells you", "they don't want",
+        "this changed", "changed everything", "game changer", "mind blown",
+        "shocking", "surprised", "unexpected", "never", "always",
+        "truth about", "real reason", "actually", "really",
+        "hidden", "insider", "exclusive"
+      ]
+    },
+    "transformation": {
+      "modifier": 0.15,
+      "terms": [
+        "before", "after", "transformed", "transformation",
+        "from zero", "from nothing", "started with",
+        "how i went", "how i built", "journey",
+        "changed my life", "life changing", "breakthrough"
+      ]
+    },
+    "contrarian": {
+      "modifier": 0.15,
+      "terms": [
+        "wrong", "mistake", "mistakes", "myth", "myths", "lie", "lies",
+        "overrated", "underrated", "unpopular opinion", "controversial",
+        "why i stopped", "why i quit", "the problem with",
+        "nobody talks about", "uncomfortable truth"
+      ]
+    },
+    "urgency": {
+      "modifier": 0.10,
+      "terms": [
+        "before it's too late", "while you still can", "last chance",
+        "now or never", "running out", "limited",
+        "don't miss", "must watch", "need to know"
+      ]
+    },
+    "technical_penalty": {
+      "modifier": -0.20,
+      "note": "Applied per technical term found. Uses technical_terms list."
+    }
+  },
+
+  "constants": {
+    "max_videos_per_keyword": 30,
+    "days_back": 90,
+    "min_outlier_score": 1.5,
+    "min_video_duration_seconds": 180,
+    "min_view_count": 1000,
+    "min_subscribers": 100000
+  }
+}

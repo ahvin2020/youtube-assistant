@@ -5,6 +5,9 @@ First, load your persona by reading `agents/research-writer.md`.
 
 This command covers the full pipeline: **Research → Outline → Script**.
 
+If the user has already run `/research` on a topic, this command will detect the existing
+brief and skip straight to outlining — no need to re-research.
+
 ## Step 1 — Check for Existing Projects
 
 List any existing research projects:
@@ -25,6 +28,7 @@ Then read `orchestrators/research/pipeline.md` and follow it step by step.
 **Critical rules**:
 - This is an iterative, multi-phase workflow — NEVER advance phases without explicit user instruction
 - Phase 1 (Research): gather sources, write brief, iterate with user
+  - **Brand-mention format skips research** — goes straight to outline after gathering brand requirements
 - Phase 2 (Outline): propose video structure, iterate with user
 - Phase 3 (Script): write in user's voice (using tone profile), iterate with user
 - Use `executors/research/fetch_transcript.py` to fetch YouTube video transcripts — do not reimplement this

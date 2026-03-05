@@ -17,7 +17,12 @@ workspace/temp/
 
 # Generated config
 workspace/config/research_sheet.json
+workspace/config/topics_sheet.json
+workspace/config/analysis_sheet.json
+workspace/config/intelligence_sheet.json
+workspace/config/hooks.json
 memory/channel-profile.md
+memory/writing-style.md
 
 # ML model binaries (download separately)
 executors/thumbnail/models/

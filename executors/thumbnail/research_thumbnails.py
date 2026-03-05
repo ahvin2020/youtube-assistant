@@ -22,51 +22,12 @@ import tempfile
 import time
 import urllib.request
 import urllib.error
-from datetime import date, datetime
 from typing import Optional
 
-
-def search_youtube(query: str, count: int) -> list[dict]:
-    """Search YouTube via yt-dlp and return full video metadata.
-
-    Uses --dump-json (no --flat-playlist) to get performance fields:
-    view_count, like_count, upload_date, channel_follower_count, etc.
-    Slower (~3s/video) but much richer data.
-    """
-    cmd = [
-        "yt-dlp",
-        f"ytsearch{count}:{query}",
-        "--dump-json",
-        "--no-download",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-    if result.returncode != 0:
-        raise RuntimeError(f"yt-dlp search failed: {result.stderr.strip()}")
-
-    videos = []
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        vid = {
-            "video_id": data.get("id"),
-            "title": data.get("title"),
-            "channel": data.get("channel") or data.get("uploader"),
-            "channel_id": data.get("channel_id"),
-            "channel_subscribers": data.get("channel_follower_count"),
-            "channel_verified": data.get("channel_is_verified", False),
-            "view_count": data.get("view_count"),
-            "like_count": data.get("like_count"),
-            "comment_count": data.get("comment_count"),
-            "upload_date": data.get("upload_date"),
-            "duration": data.get("duration"),
-        }
-        videos.append(vid)
-    return videos
+_EXECUTORS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EXECUTORS_DIR not in sys.path:
+    sys.path.insert(0, _EXECUTORS_DIR)
+from shared.youtube import search_youtube, enrich_video
 
 
 def filter_videos(
@@ -106,35 +67,6 @@ def sort_videos(videos: list[dict], sort_by: str) -> list[dict]:
         return sorted(videos, key=perf_score, reverse=True)
     # relevance = keep YouTube's original order
     return videos
-
-
-def enrich_video(vid: dict) -> dict:
-    """Add computed fields to a video entry."""
-    views = vid.get("view_count") or 0
-    subs = vid.get("channel_subscribers") or 0
-    likes = vid.get("like_count") or 0
-    vid["views_per_subscriber"] = round(views / subs, 2) if subs > 0 else None
-    vid["like_view_ratio"] = round(likes / views, 4) if views > 0 else None
-
-    duration = vid.get("duration") or 0
-    if duration < 300:
-        vid["duration_category"] = "short"
-    elif duration <= 900:
-        vid["duration_category"] = "medium"
-    else:
-        vid["duration_category"] = "long"
-
-    upload = vid.get("upload_date")
-    if upload:
-        try:
-            upload_dt = datetime.strptime(upload, "%Y%m%d").date()
-            vid["days_since_upload"] = (date.today() - upload_dt).days
-        except ValueError:
-            vid["days_since_upload"] = None
-    else:
-        vid["days_since_upload"] = None
-
-    return vid
 
 
 def download_thumbnail(video_id: str, output_path: str) -> Optional[str]:
