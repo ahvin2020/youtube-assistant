@@ -73,20 +73,17 @@ The thumbnail pipeline needs the **Niche Terms** section (for cross-niche filter
 
 ## Step 2 — Competitive Research (Claude Intelligence Step)
 
-### 2a. Load Channel Identity
+### 2a. Verify Thumbnail Channels
 
-Extract `channel_id` from `memory/channel-profile.md` (Identity → Channel ID)
-for the `--exclude-channel` flag.
-
-No manual query generation needed — cross-niche research uses config-driven
-keyword search + monitored channel scanning.
+Verify `memory/thumbnail-channels.md` exists and has channels. If not, stop
+and tell the user to create it (see `memory/thumbnail-channels.md` format).
 
 ### 2b. Run Cross-Niche Research
 
-Run a single `cross_niche_research.py` call that searches **two sources**:
-keyword search (curated cross-niche keywords) and channel monitoring (recent
-videos from monitored channels). Both are merged, filtered, scored (outlier +
-recency + hook modifiers), and ranked — all in one step.
+Run `cross_niche_research.py` to fetch recent videos from curated
+thumbnail-quality channels. The executor handles rotation tracking
+(cycles through the full channel pool) and seen-video deduplication
+(skips videos from previous runs).
 
 **Timing**: Record a wall-clock start time (via `date +%s`) before launching
 the search. After the full research phase completes, record the end time and
@@ -97,88 +94,48 @@ python3 executors/thumbnail/cross_niche_research.py \
   "workspace/temp/thumbnail/<PROJECT>/research/cross_niche/" \
   --config workspace/config/research_config.json \
   --channel-profile memory/channel-profile.md \
-  --max-keywords 6 --max-channels 8 --count 100 \
-  --min-outlier 1.5 \
-  --exclude-channel <channel_id> \
+  --thumbnail-channels memory/thumbnail-channels.md \
+  --topic "<user's topic>" \
+  --max-channels 20 --count 70 \
+  --min-outlier 1.5
 ```
 
-The executor now calculates the **full final score** internally:
+The executor calculates the **full final score** internally:
 1. `outlier_score` = views / channel average views
 2. `recency_multiplier` = time-based boost (1.15× for ≤30 days, etc.)
 3. `base_score` = outlier × recency
 4. Hook modifiers (title keyword matching against `hook_categories` in config)
-5. `final_score` = base_score × (1 + sum of modifiers)
+5. Topic relevance boost (+35% for videos matching the current topic)
+6. `final_score` = base_score × (1 + sum of modifiers)
 
-Results are sorted by `final_score` descending, top 100 kept.
+Results are sorted by `final_score` descending, top 70 kept.
 
 On success: report how many thumbnails were downloaded, how many were
-filtered out (own niche, format, outlier threshold), keywords searched,
-and channels scanned.
+filtered out (own niche, format, outlier threshold), seen-video dedup count,
+and channels sampled.
 
 On failure:
   - `yt-dlp` not found → tell user: `brew install yt-dlp`
-  - All filtered out → try more keywords (`--max-keywords 10`) or lower
-    outlier threshold (`--min-outlier 1.0`)
+  - All filtered out → suggest adding more channels to `thumbnail-channels.md`
+    or lowering outlier threshold (`--min-outlier 1.0`)
   - No results → note this, proceed without research
 
-### 2c. AI Analysis (Claude Intelligence Step)
+### 2c. Export to Google Sheet
 
-For each video in the research results, generate 3 adapted title variants.
-This is done by Claude (you) directly — no external API calls needed.
-
-**Process:**
-1. Read `metadata.json` to get the video list
-2. **Pre-bundle transcripts into batch files** — for each batch of ~10 videos,
-   read all transcript files (first 4000 chars) and embed the text directly into
-   the batch JSON. This way each subagent needs only 1 Read call instead of 11.
-   Save batch files to `batch_0.json`, `batch_1.json`, etc. in the research dir.
-3. Launch **parallel subagents** (batches of ~10 videos each, using **Haiku** model —
-   this is mechanical title variant generation, not reasoning).
-   **IMPORTANT — Parallel execution**: All batch subagents must be launched in a
-   **single message** so they run concurrently. Do NOT launch them one at a time.
-   Pass each subagent its batch file path. Each subagent reads one file and generates:
-   - **Title variants**: 3 titles adapted to the user's topic, inspired by the
-     reference title's hook structure
-4. Merge results and save to `analysis.json`:
-   ```
-   workspace/temp/thumbnail/<PROJECT>/research/cross_niche/analysis.json
-   ```
-
-Each entry in `analysis.json`:
-```json
-{
-  "video_id": "abc123",
-  "category": "Business",
-  "title_variant_1": "...",
-  "title_variant_2": "...",
-  "title_variant_3": "..."
-}
-```
-
-Category is auto-classified from the title: Money, Productivity, Creator,
-Business, or General. No Claude call needed for this.
-
-On failure: if a subagent fails for some videos, proceed with available data.
-Missing analyses will show as empty cells in the Sheet.
-
-### 2d. Export to Google Sheet
-
-Export the scored results + AI analysis to a Google Sheet. Each run creates
-a new tab in the same reusable spreadsheet.
+Export the scored results to a Google Sheet. Each run creates a new tab
+in the same reusable spreadsheet.
 
 ```bash
 python3 executors/thumbnail/export_research_sheet.py \
   --input "workspace/temp/thumbnail/<PROJECT>/research/cross_niche/metadata.json" \
-  --analysis "workspace/temp/thumbnail/<PROJECT>/research/cross_niche/analysis.json" \
   --tab-name "<PROJECT>" \
   --credentials credentials.json \
   --sheet-config workspace/config/research_sheet.json
 ```
 
-The Sheet has 18 columns: Thumbnail, Thumbnail URL, Title, Final Score,
+The Sheet has 14 columns: Thumbnail, Thumbnail URL, Title, Final Score,
 Outlier Score, Days Old, Video Link, View Count, Duration (min), Channel Name,
-Channel Avg Views, Category, Title Variant 1-3, Raw Transcript,
-Publish Date, Source.
+Channel Avg Views, Category, Publish Date, Source.
 
 On success: report the Sheet URL to the user.
 On failure:
@@ -186,14 +143,15 @@ On failure:
   - No credentials.json → tell user to set up OAuth credentials
   - First run will open a browser for OAuth consent (token cached afterward)
 
-### 2e. Present Research Summary
+### 2d. Present Research Summary
 
 Show a brief summary alongside the Sheet link:
 ```
 RESEARCH COMPLETE:
-  Research: cross-niche (X keywords + Y channels)
+  Research: curated channels (X of Y sampled)
   Research time: Xm Ys
-  Videos scanned: X → filtered to Y outliers → top 100 scored
+  Videos scanned: X → seen filtered: Y → cross-niche filtered to Z → top 70 scored
+  Topic: <topic> (keywords: <extracted keywords>)
   Sheet: <Google Sheet URL>
 
   Browse the sheet to review thumbnails, scores, and video links.
@@ -216,7 +174,7 @@ Update `state.json`: set `phase` to `"selection"`.
 
 ### 3a. User Selects References from Sheet
 
-The user browses the Google Sheet (from Step 2c) and picks 5 reference
+The user browses the Google Sheet (from Step 2c/2d) and picks 5 reference
 thumbnails by row number or video link. They may also provide the
 thumbnail link from the Sheet.
 
@@ -337,10 +295,35 @@ PROMPT SUMMARY:
   ...
 ```
 
-Note: Title variants are pre-generated during the research phase (Step 2c)
-and visible in the Google Sheet. No need to generate them here.
 
-### 3e. Save Selections + Prompts
+### 3e. Asset Collection (Optional)
+
+After headshot + text approval, ask the user if they have any additional assets
+to include in specific concepts:
+
+```
+ASSETS (optional):
+  Do you have any logos, screenshots, app icons, or graphics to include
+  in any of the concepts? Drop them in:
+    workspace/temp/thumbnail/<PROJECT>/assets/
+
+  Then tell me which assets go with which concepts, e.g.:
+    "A: logo.png, B: screenshot.png + chart.png"
+
+  Or say "no assets" to skip.
+```
+
+**⏸ STOP and wait for user response.**
+
+If the user provides assets:
+- Validate each file exists in the assets directory
+- Store in `state.json` under each concept's `assets` list
+- These will be passed as `--assets` to `replace_face.py` with strict
+  preservation instructions (Gemini is told to keep them pixel-perfect)
+
+If "no assets" → proceed without.
+
+### 3f. Save Selections + Prompts
 
 Save to `state.json`:
 ```json
@@ -350,7 +333,8 @@ Save to `state.json`:
     {"ref_number": 3, "ref_path": "...", "headshot": "worried.JPG",
      "extra_headshots": ["confident_3.JPG", "curious_2.JPG", "serious_1.JPG"],
      "text": "WRONG MOVE?", "text_position": "top-left",
-     "prompt": "<full reverse-engineered prompt>"},
+     "prompt": "<full reverse-engineered prompt>",
+     "assets": ["workspace/temp/thumbnail/<PROJECT>/assets/logo.png"]},
     ...
   ]
 }
@@ -362,21 +346,30 @@ Save to `state.json`:
 
 ### 4a. Model Selection + Cost Disclosure (MANDATORY — show before generating)
 
-Present the model menu and cost summary together. Check today's usage by
-reading `workspace/temp/thumbnail/usage.json` (if it exists).
+First, check pricing freshness and today's usage:
+```bash
+python3 executors/shared/gemini_usage.py --show
+```
+
+If `pricing.fetched_date` is before today, refresh pricing:
+1. Use WebFetch to read https://ai.google.dev/gemini-api/docs/pricing
+2. Parse per-image costs and daily free limits for each image generation model
+3. Update: `python3 executors/shared/gemini_usage.py --update-pricing '<json>'`
+
+Present the model menu (from cached pricing) and cost summary together:
 
 ```
 MODEL SELECTION:
   Which image generation model would you like to use?
 
   1. gemini-3.1-flash-image-preview (Recommended)
-     $0.03/image · free tier 500/day · good quality
+     $<price>/image · free tier <limit>/day · good quality
   2. gemini-2.0-flash-exp-image-generation
-     FREE (preview) · ~100-500/day · experimental
+     $<price>/image · <limit>/day · experimental
   3. imagen-4-fast
-     $0.020/image · 100/day · Google Imagen
+     $<price>/image · <limit>/day · Google Imagen
   4. gemini-3-pro-image
-     $0.039/image · no free tier · highest quality
+     $<price>/image · no free tier · highest quality
 
 GENERATION COST:
   Model:       gemini-3.1-flash-image-preview (free tier)
@@ -413,6 +406,17 @@ For each selected reference, use the reverse-engineered prompt from Step 3d:
     --color-match
 ```
 
+If the concept has assets (from Step 3e), add them:
+```bash
+    --assets \
+        "workspace/temp/thumbnail/<PROJECT>/assets/logo.png" \
+        "workspace/temp/thumbnail/<PROJECT>/assets/screenshot.png"
+```
+
+Face identity is always locked (built into the base prompt) while Gemini has
+freedom over color grading. The `--assets` flag tells Gemini to include each
+asset exactly as provided — no redrawing or reinterpretation.
+
 The primary headshot is the pose-matched one from Step 3c. Extra headshots
 provide Gemini with additional angles/expressions of Subject Alpha for
 better facial consistency. Read `extra_headshots` from `state.json`.
@@ -432,49 +436,21 @@ On failure:
 
 ---
 
-## Step 5 — Grid + QA
+## Step 5 — Present Results
 
-### 5a. Build Grid
+**Do NOT build grids or mobile previews.** The user browses individual concept
+files directly in their file explorer / IDE. Grids and mobile QA are skipped.
 
-Build directly from face-replaced images (text is already baked in by Gemini):
+### 5a. List Generated Files
 
-```bash
-python3 executors/thumbnail/build_grid.py \
-    "workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_A.png" \
-    "workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_B.png" \
-    "workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_C.png" \
-    "workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_D.png" \
-    "workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_E.png" \
-    "workspace/output/thumbnail/<PROJECT>/grid.png" \
-    --cols 3
+List all generated concept files with their text and concept group:
 ```
+GENERATED — <N> concepts
 
-### 5b. Present Results
-
-Print the path to the grid so the user can open it themselves (do NOT open it automatically):
-```
-Thumbnail grid: workspace/output/thumbnail/<PROJECT>/grid.png
-```
-
-Read the grid using the Read tool (vision) and present it alongside the
-results. Do NOT use markdown links for image paths — show plain text paths
-so the user can find them in the file explorer:
-```
-THUMBNAIL GRID — Generated in <total_elapsed>s
-
-  A: "<text>"
-  B: "<text>"
-  C: "<text>"
-  D: "<text>"
-  E: "<text>"
-
-  Files:
-    Grid       workspace/temp/thumbnail/<PROJECT>/grid_concepts.png
-    Concept A  workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_A.png
-    Concept B  workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_B.png
-    Concept C  workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_C.png
-    Concept D  workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_D.png
-    Concept E  workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_E.png
+  A variations (thinking pose):
+    workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_A1.png  "<text>"
+    workspace/temp/thumbnail/<PROJECT>/face_replaced/concept_A2.png  "<text>"
+    ...
 
 USAGE:
   Model:       <model_name>
@@ -483,15 +459,6 @@ USAGE:
   Used today:  <X> images (session total)
   Free left:   ~<remaining> remaining today
 ```
-
-The `<total_elapsed>` is wall-clock time from when the first generation task
-was launched to when the last one completed (since they run in parallel).
-Read `usage_today` from the last executor's JSON output, then compute
-remaining quota based on the model's daily limit (e.g. 500 for flash).
-
-For mobile QA: read each concept image at the original resolution, visually assess
-whether text would be legible at 320×180 mobile size. Flag any concept where text
-is too small, low contrast, or blends into the background.
 
 Update `state.json`: set `phase` to `"refinement"`, increment `iteration`.
 
@@ -509,6 +476,7 @@ Update `state.json`: set `phase` to `"refinement"`, increment `iteration`.
 | "B looks bad, generate from scratch"| Fall back: `generate_background.py` + full `composite.py`   |
 | "Pick different references"         | Loop back to Step 3                                         |
 | "Variations of A"                   | Generate 4 variations of A with different headshots/prompts |
+| "Add logo to C"                     | Add asset to concept, re-run `replace_face.py` with `--assets` |
 | "Done"                              | Finalize with current selection                              |
 
 ### Text Changes
@@ -517,6 +485,14 @@ When the user wants a text tweak:
 - Re-run `replace_face.py --full-prompt` for that concept
 - Rebuild grid, present
 - (This costs an API call since text is baked into the Gemini output)
+
+### Mockup Generation (Ad-hoc)
+When the user asks to generate mockups (outside the standard pipeline), update
+the usage tracker after each generation so daily quota stays accurate:
+```bash
+python3 executors/shared/gemini_usage.py --update-usage --count <N>
+```
+where `<N>` is the number of images generated in that mockup batch.
 
 ### Fallback to Generate-From-Scratch
 When face replacement quality is poor for a concept:
@@ -554,7 +530,6 @@ When the user selects a final concept:
    Thumbnail complete!
 
    Final:     workspace/output/thumbnail/<PROJECT>/thumbnail_final.png
-   Grid:      workspace/output/thumbnail/<PROJECT>/grid.png
    Size:      <file_size>
    Concept:   <letter> — "<text overlay>" (ref #<number>)
    Rounds:    <iteration_count>

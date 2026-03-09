@@ -36,7 +36,7 @@ workspace/output/<domain>/          ← your files land here
 | `/cut` | Built | Transcribe + align + cut video to match a script |
 | `/write` | Built | Research topics, outline, and draft scripts with tone matching |
 | `/thumbnail` | Built | Cross-niche research + AI thumbnail generation with face replacement |
-| `/topics` | Built | Discover high-performing topics from YouTube, Google Trends, Reddit, and social platforms |
+| `/idea` | Built | Discover high-performing topics from YouTube, Google Trends, Reddit, and social platforms |
 | `/post` | Stub | Upload to YouTube via Data API v3 |
 
 ---
@@ -53,9 +53,9 @@ workspace/output/<domain>/          ← your files land here
   ```bash
   brew install yt-dlp
   ```
-- **openai-whisper** — local transcription, no API key needed
+- **faster-whisper** — local transcription (CTranslate2 backend, ~4x faster than openai-whisper)
   ```bash
-  pip install openai-whisper
+  pip install faster-whisper
   ```
 
 ### For `/write` pipeline
@@ -68,7 +68,7 @@ pip install python-docx google-api-python-client google-auth-httplib2 google-aut
 pip install Pillow google-genai mediapipe opencv-contrib-python
 ```
 
-### For `/topics` pipeline
+### For `/idea` pipeline
 ```bash
 pip install pytrends
 ```
@@ -81,7 +81,7 @@ pip install pytrends
 git clone https://github.com/ahvin2020/youtube-assistant.git
 cd youtube-assistant
 brew install ffmpeg yt-dlp
-pip install openai-whisper
+pip install faster-whisper
 ```
 
 ### Credentials
@@ -133,13 +133,13 @@ Claude will:
 3. Iterative workflow: Research → Outline → Script draft
 4. Final script exported to Google Docs
 
-### `/topics` — Discover content topics
+### `/idea` — Discover content ideas
 
-1. Run `/topics` (optionally with `longform`, `shorts`, or `both`)
+1. Run `/idea` (optionally with `longform`, `shorts`, or `both`)
 2. Claude gathers data from YouTube competitors, Google Trends, Reddit, and social platforms in parallel
-3. An Opus subagent clusters, scores, and analyzes topics
+3. An Opus subagent clusters, scores, and analyzes ideas
 4. Results exported to a Google Sheet with long-form and shorts scores
-5. Interactive refinement: deep dive into specific topics or search for more
+5. Interactive refinement: deep dive into specific ideas or search for more
 
 ### `/thumbnail` — Design thumbnails
 
@@ -177,4 +177,4 @@ workspace/
 ## Roadmap
 
 - [ ] `/post` — upload and schedule videos via YouTube Data API v3
-- [ ] `/topics` historical tracking — compare topic trends over time
+- [ ] `/idea` historical tracking — compare idea trends over time

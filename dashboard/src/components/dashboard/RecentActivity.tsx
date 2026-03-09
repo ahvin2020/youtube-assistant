@@ -1,11 +1,16 @@
-import Image from "next/image";
-import { Project, DOMAIN_ICONS } from "@/lib/types";
-import { Employee } from "@/lib/types";
+import { Project, DOMAIN_ICONS, DOMAIN_COLORS, ROLE_TITLES } from "@/lib/types";
 
 interface RecentActivityProps {
   projects: Project[];
-  employees: Employee[];
 }
+
+const DOT_COLORS: Record<string, string> = {
+  indigo: "bg-indigo-400",
+  pink: "bg-pink-400",
+  emerald: "bg-emerald-400",
+  amber: "bg-amber-400",
+  sky: "bg-sky-400",
+};
 
 function getRelativeTime(dateStr: string): string {
   const d = new Date(dateStr);
@@ -30,100 +35,69 @@ function getRelativeTime(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function getEmployeeForDomain(employees: Employee[], domain: string): Employee | undefined {
-  return employees.find((e) => e.domains.includes(domain as Employee["domains"][0]));
-}
-
 function getActivityText(project: Project): string {
   if (project.currentPhase === "complete") {
-    return `completed ${project.displayName}`;
+    return `Completed ${project.displayName}`;
   }
-  return `working on ${project.displayName}`;
+  return `Working on ${project.displayName}`;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  complete: "bg-emerald-400",
-  research: "bg-indigo-400",
-  outline: "bg-indigo-400",
-  script: "bg-indigo-400",
-  concepts: "bg-pink-400",
-  generate: "bg-pink-400",
-  edit: "bg-pink-400",
-  gathering: "bg-emerald-400",
-  analysis: "bg-amber-400",
-  scanning: "bg-amber-400",
-  transcribe: "bg-sky-400",
-  align: "bg-sky-400",
-  cut: "bg-sky-400",
-};
-
-export default function RecentActivity({ projects, employees }: RecentActivityProps) {
+export default function RecentActivity({ projects }: RecentActivityProps) {
   const sorted = [...projects]
     .sort((a, b) => b.updated.localeCompare(a.updated))
-    .slice(0, 10);
+    .slice(0, 15);
 
   return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden flex flex-col min-h-0">
-      <div className="px-4 sm:px-5 py-3 border-b border-slate-800 flex items-center justify-between shrink-0">
-        <h2 className="text-sm font-semibold text-slate-300">
-          Recent Activity
+    <div className="overflow-hidden flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-slate-800 shrink-0">
+        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">
+          Activity Feed
         </h2>
-        <span className="text-xs text-slate-500">{sorted.length} events</span>
       </div>
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/50 scrollbar-thin">
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
         {sorted.map((project) => {
-          const employee = getEmployeeForDomain(employees, project.domain);
+          const role = ROLE_TITLES[project.domain] || "Agent";
+          const domainColor = DOMAIN_COLORS[project.domain];
+          const dotColor = DOT_COLORS[domainColor] || "bg-slate-400";
           const isComplete = project.currentPhase === "complete";
-          const dotColor = isComplete
-            ? STATUS_COLORS.complete
-            : STATUS_COLORS[project.currentPhase] || "bg-sky-400";
 
           return (
             <div
               key={`${project.domain}-${project.slug}`}
-              className="px-4 sm:px-5 py-3 flex items-start gap-3 hover:bg-slate-800/30 transition-colors"
+              className="px-4 py-3 border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
             >
-              {/* Employee avatar */}
-              <div className="relative shrink-0 mt-0.5">
-                {employee ? (
-                  <Image
-                    src={employee.avatar}
-                    alt={employee.name}
-                    width={32}
-                    height={32}
-                    className="w-8 h-8 rounded-full object-cover bg-slate-800"
-                  />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs">
-                    {DOMAIN_ICONS[project.domain]}
-                  </div>
-                )}
-                {/* Status dot */}
-                <span
-                  className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-slate-900 ${dotColor} ${
-                    !isComplete ? "animate-pulse" : ""
-                  }`}
-                />
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-slate-500">
+                  {getRelativeTime(project.updated)}
+                </span>
               </div>
-
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-slate-200">
-                  <span className="font-medium">{employee?.name || "Agent"}</span>{" "}
-                  <span className="text-slate-400">{getActivityText(project)}</span>
-                </div>
-                <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                  <span>{DOMAIN_ICONS[project.domain]}</span>
-                  <span className="capitalize">{project.currentPhase}</span>
-                  <span className="text-slate-600">·</span>
-                  <span>{getRelativeTime(project.updated)}</span>
+              <div className="flex items-start gap-2">
+                <span
+                  className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
+                    isComplete ? "bg-emerald-400" : dotColor
+                  } ${!isComplete ? "animate-pulse" : ""}`}
+                />
+                <div className="min-w-0">
+                  <div className="text-xs">
+                    <span className="font-semibold text-slate-200">
+                      {role}
+                    </span>
+                    <span className="text-slate-500"> - </span>
+                    <span className="text-slate-400">
+                      {getActivityText(project)}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-600 mt-0.5 flex items-center gap-1.5">
+                    <span>{DOMAIN_ICONS[project.domain]}</span>
+                    <span className="capitalize">{project.currentPhase}</span>
+                  </div>
                 </div>
               </div>
             </div>
           );
         })}
         {sorted.length === 0 && (
-          <div className="px-5 py-8 text-center text-sm text-slate-500">
+          <div className="px-4 py-8 text-center text-xs text-slate-500">
             No activity yet. Run a pipeline to get started.
           </div>
         )}

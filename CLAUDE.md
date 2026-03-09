@@ -37,20 +37,27 @@ workspace/output/<domain>/       ← All output files land here
 
 | Domain         | Command  | Directive                          | Orchestrator                           | Executor(s)                                    |
 |----------------|----------|------------------------------------|----------------------------------------|------------------------------------------------|
-| Video cut      | /cut     | directives/video/auto-edit.md      | orchestrators/video/auto-edit.md       | executors/video/transcribe.py, apply_cuts.py   |
-| Research       | /research | directives/research/topic.md      | orchestrators/research/research-pipeline.md | executors/research/fetch_transcript.py |
+| Video edit     | /edit    | directives/video/edit.md           | orchestrators/video/edit.md            | executors/video/transcribe.py, apply_cuts.py, verify_cut.py; executors/enhance/validate_spec.py, prepare_assets.py, render_preview.js, render_final.js |
 | Write          | /write   | directives/research/topic.md       | orchestrators/research/pipeline.md     | executors/research/fetch_transcript.py, export_google_doc.py |
 | Thumbnail      | /thumbnail | directives/thumbnail/generate.md | orchestrators/thumbnail/generate.md    | executors/thumbnail/research_thumbnails.py, cross_niche_research.py, export_research_sheet.py, replace_face.py, match_headshot.py, composite.py, build_grid.py, generate_background.py, fetch_asset.py |
-| Topics         | /topics  | directives/topics/discover.md      | orchestrators/topics/pipeline.md       | executors/topics/youtube_topics.py, google_trends_topics.py, reddit_topics.py, twitter_topics.py, export_topics_sheet.py |
+| Ideas          | /idea  | directives/ideas/discover.md      | orchestrators/ideas/pipeline.md       | executors/ideas/youtube_ideas.py, google_trends_ideas.py, reddit_ideas.py, twitter_ideas.py, export_ideas_sheet.py |
 | Analyze        | /analyze | directives/analyze/content-analysis.md | orchestrators/analyze/pipeline.md  | executors/analyze/fetch_channel_data.py, export_analysis_sheet.py |
 | Publishing     | /post    | directives/publishing/post.md      | orchestrators/publishing/pipeline.md   | executors/publishing/upload_video.py           |
 
+| Status         | /status  | _(none)_                           | _(none)_                               | _(none — reads state.json files directly)_     |
+
 _(Publishing is a stub — not yet implemented)_
+
+**Cross-pipeline linking**: Projects are linked across pipelines by `content_slug` — a
+slug field in each `state.json` (e.g., `ai-stock-picks`). The `/status` command groups
+projects by `content_slug` to show pipeline progress. Handoffs (`/idea` → `/write`,
+`/write` → `/edit`, `/write` → `/thumbnail`) auto-detect upstream outputs and offer to
+pre-populate downstream inputs.
 
 **Shared executor utilities** (`executors/shared/`):
 - `youtube.py` — `search_youtube`, `fetch_channel_recent_videos`, `enrich_video`
 - `google_sheets.py` — OAuth2 auth, spreadsheet CRUD, tab management
-- `parse_profile.py` — `channel-profile.md` parser (niche terms, keywords, channels)
+- `parse_profile.py` — `channel-profile.md` parser (niche terms, keywords, channels) + `thumbnail-channels.md` parser
 
 ## Workspace Convention
 
@@ -65,6 +72,9 @@ and each project within a domain uses a dated prefix: `YYYYMMDD_<slug>`.
 | workspace/temp/\<domain\>/\<PROJECT\>/   | Transcripts, cut specs, intermediate files            |
 | workspace/config/                        | System config (scoring rules, filters, thresholds)    |
 | memory/channel-profile.md                | Channel identity, niche terms, tone, discovery config, cross-niche keywords, monitored channels |
+| memory/thumbnail-channels.md             | Curated channels for thumbnail research (high thumbnail quality) |
+| workspace/config/thumbnail_seen.json     | Cross-run seen-video tracking (auto-pruned >1 month) |
+| workspace/config/thumbnail_rotation.json | Channel rotation tracking (least-recently-sampled priority) |
 
 **Project naming**: `<PROJECT>` = `YYYYMMDD_<slug>` (e.g. `20260303_cpf-frs-vs-ers`).
 The date is auto-set to today when a pipeline starts.
@@ -91,10 +101,11 @@ Three-tier model usage — pick the cheapest model that can do the job well:
 
 | Step                              | Pipeline    | Why Opus                                      |
 |-----------------------------------|-------------|-----------------------------------------------|
-| Semantic alignment (cut spec)     | /cut        | Matching script↔transcript by meaning, choosing correct takes |
+| Semantic alignment (cut spec)     | /edit        | Script-guided mode only — matching script↔transcript by meaning. Retake-only mode uses Sonnet (pattern matching is sufficient) |
+| Graphics analysis (visual suggestions) | /edit   | Visual storytelling judgment, content-aware enhancement placement |
 | Prompt engineering (reverse-engineer thumbnails) | /thumbnail | Analyzing visual composition, generating detailed recreation prompts |
 | Script drafting                   | /write      | Creative writing quality, tone matching, narrative structure |
-| Topic intelligence (clustering, scoring) | /topics | Cross-source analysis, nuanced scoring, angle generation |
+| Topic intelligence (clustering, scoring) | /idea | Sonnet handles both passes (clustering + enrichment) — fast enough for pattern-matching hooks/angles |
 | Hook extraction (mining proven hooks) | /analyze | Understanding why hooks work, categorizing language patterns |
 
 **Haiku candidates**: file search/read subagents, JSON parsing, simple data formatting,
@@ -121,7 +132,7 @@ Subagents without an explicit `model` parameter inherit the base model (Sonnet).
   calls are independent of each other, run them in parallel (multiple tool calls in one
   message, or multiple background agents).
 - **Pipeline stages that don't depend on each other should overlap.** For example, in
-  /topics, all four data-gathering executors run in parallel before the analysis step.
+  /idea, all four data-gathering executors run in parallel before the analysis step.
 - **Don't serialize what can be concurrent.** If you're about to run three independent
   searches or three independent executor calls, batch them — don't do them one by one.
 
@@ -138,17 +149,34 @@ current task makes the response worse. Trim context to precisely what's needed.
   critical information; make sure it lives in a markdown file (directive, orchestrator,
   plan, or notes).
 
+### Data Format — Use the Right Format for the Consumer
+- **TSV for LLM prompts**: When passing flat/tabular data to subagent prompts, convert to
+  TSV (tab-separated, header row first). TSV eliminates repeated key names across rows
+  (~50% fewer tokens than JSON arrays of objects). Use the `json_to_tsv` helper defined
+  in orchestrators.
+- **TOON for nested arrays in LLM prompts**: When passing uniform arrays with nesting
+  (e.g., transcript segments, keep_segments) to subagent prompts, use TOON
+  (Token-Oriented Object Notation). TOON provides TSV-like token savings (~40-50%)
+  while supporting nested structures. Python: `import toon; toon.encode(data)`.
+  Reserve for subagent prompts only — code-consumed files stay JSON.
+- **JSON for code**: Executor stdout, state files, config files, and any data parsed by
+  Python/JS stays JSON. Code needs reliable structure; token cost is irrelevant.
+- **JSON for heterogeneous nested data**: Deeply nested structures with non-uniform shapes
+  (graphics specs, brand briefs) stay JSON — TOON tabular format requires uniform keys.
+- **Markdown for prose**: Research briefs, scripts, outlines stay markdown — not JSON
+  with text fields.
+
 ## Agent Personas
 For domain-specific sessions, load the relevant persona from `agents/`:
-- `agents/video-editor.md` — for video editing sessions
+- `agents/video-editor.md` — for video editing sessions (cut + graphics pass)
 - `agents/research-writer.md` — for research and script writing sessions
 - `agents/thumbnail-designer.md` — for thumbnail design sessions
-- `agents/topic-finder.md` — for topic discovery sessions
+- `agents/idea-finder.md` — for topic discovery sessions
 - `agents/content-analyst.md` — for content analysis and hook mining sessions
 
 ## Dependencies
 - `ffmpeg` 6.0+ (brew install ffmpeg) — must include `arnndn` filter (default in Homebrew builds)
-- `openai-whisper` (pip install openai-whisper) — for transcription
+- `faster-whisper` (pip install faster-whisper) — for transcription (CTranslate2 backend, ~4x faster than openai-whisper)
 - Python 3.9+
 - `yt-dlp` (brew install yt-dlp) — for /write pipeline
 - `python-docx` (pip install python-docx) — for Google Docs export in /write pipeline
@@ -157,9 +185,13 @@ For domain-specific sessions, load the relevant persona from `agents/`:
 - `google-genai` (pip install google-genai) — for Gemini face replacement and image generation in /thumbnail pipeline
 - `mediapipe` (pip install mediapipe) — for face pose detection in /thumbnail pipeline (headshot matching)
 - `opencv-contrib-python` (pip install opencv-contrib-python) — required by mediapipe for PnP pose estimation
-- `pytrends` (pip install pytrends) — for Google Trends data in /topics pipeline
-- `curl_cffi` (pip install curl_cffi) — for X.com GraphQL API scraping in /topics pipeline (Chrome TLS impersonation)
+- `pytrends` (pip install pytrends) — for Google Trends data in /idea pipeline
+- `curl_cffi` (pip install curl_cffi) — for X.com GraphQL API scraping in /idea pipeline (Chrome TLS impersonation)
 - `XClientTransaction` (pip install XClientTransaction) — generates x-client-transaction-id header required by X.com API
+- Node.js 18+ — for Remotion graphics pass rendering in /edit pipeline
+- `remotion` (npm — in remotion/ subproject) — for programmatic video graphics rendering
+- `playwright` (pip install playwright) — for screenshot capture in /edit graphics pass asset preparation (optional)
+- `python-toon` (pip install python-toon) — for TOON encoding when passing nested arrays to subagent prompts (token-efficient alternative to JSON)
 
 ## Credentials
 - `credentials.json` — Google OAuth2 client credentials file, lives at project root

@@ -1,7 +1,7 @@
 """Shared Google Sheets authentication and management utilities.
 
 Used by executors/thumbnail/export_research_sheet.py and
-executors/topics/export_topics_sheet.py for OAuth2 auth, spreadsheet
+executors/ideas/export_ideas_sheet.py for OAuth2 auth, spreadsheet
 creation, and tab management.
 
 Depends on: google-api-python-client google-auth-httplib2 google-auth-oauthlib

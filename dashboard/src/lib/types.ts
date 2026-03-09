@@ -1,18 +1,18 @@
 // === Domain types ===
-export type Domain = "research" | "thumbnail" | "topics" | "analyze" | "video";
+export type Domain = "research" | "thumbnail" | "ideas" | "analyze" | "video";
 
 export const DOMAIN_PHASES: Record<Domain, string[]> = {
   research: ["research", "outline", "script", "complete"],
   thumbnail: ["research", "concepts", "generate", "edit", "complete"],
-  topics: ["gathering", "analysis", "complete"],
+  ideas: ["gathering", "analysis", "complete"],
   analyze: ["scanning", "analysis", "complete"],
-  video: ["transcribe", "align", "cut", "complete"],
+  video: ["cut", "graphics", "complete"],
 };
 
 export const DOMAIN_COLORS: Record<Domain, string> = {
   research: "indigo",
   thumbnail: "pink",
-  topics: "emerald",
+  ideas: "emerald",
   analyze: "amber",
   video: "sky",
 };
@@ -20,7 +20,7 @@ export const DOMAIN_COLORS: Record<Domain, string> = {
 export const DOMAIN_ICONS: Record<Domain, string> = {
   research: "\u{1F4DD}",
   thumbnail: "\u{1F3A8}",
-  topics: "\u{1F4A1}",
+  ideas: "\u{1F4A1}",
   analyze: "\u{1F4CA}",
   video: "\u{1F3AC}",
 };
@@ -53,21 +53,41 @@ export interface Project {
   updated: string;
 }
 
-// === Employee ===
-export type EmployeeStatus = "busy" | "idle";
-
-export interface Employee {
+// === Pipeline definitions ===
+export interface Pipeline {
   id: string;
-  name: string;
-  title: string;
-  avatar: string;
-  domains: Domain[];
-  personality: string;
-  skills: string[];
+  role: string;
+  domain: Domain;
+  command: string;
+  description: string;
+  icon: string;
   color: string;
-  status: EmployeeStatus;
-  currentAssignment: string | null;
-  projectsCompleted: number;
+}
+
+export const PIPELINES: Pipeline[] = [
+  { id: "ideas", role: "Idea Finder", domain: "ideas", command: "/idea", description: "Discover trending content opportunities", icon: "\u{1F4A1}", color: "emerald" },
+  { id: "write", role: "Scriptwriter", domain: "research", command: "/write", description: "Research and write video scripts", icon: "\u{1F4DD}", color: "indigo" },
+  { id: "thumbnail", role: "Thumbnail Designer", domain: "thumbnail", command: "/thumbnail", description: "Design high-CTR thumbnails", icon: "\u{1F3A8}", color: "pink" },
+  { id: "edit", role: "Video Editor", domain: "video", command: "/edit", description: "Cut retakes and add motion graphics", icon: "\u{1F3AC}", color: "sky" },
+  { id: "analyze", role: "Content Analyst", domain: "analyze", command: "/analyze", description: "Analyze channel performance", icon: "\u{1F4CA}", color: "amber" },
+];
+
+export const ROLE_TITLES: Record<string, string> = {
+  research: "Scriptwriter",
+  thumbnail: "Thumbnail Designer",
+  ideas: "Idea Finder",
+  analyze: "Content Analyst",
+  video: "Video Editor",
+};
+
+// === Next Action ===
+export interface NextAction {
+  label: string;
+  command: string;
+  description: string;
+  domain: Domain;
+  icon: string;
+  priority: "primary" | "secondary";
 }
 
 // === Hook ===
@@ -100,11 +120,20 @@ export interface Topic {
   research_more: string;
 }
 
+// === Content project (cross-pipeline grouping) ===
+export interface ContentProject {
+  contentSlug: string;
+  displayName: string;
+  stages: Partial<Record<Domain, Project>>;
+  lastUpdated: string;
+}
+
 // === Dashboard overview ===
 export interface DashboardData {
   projects: Project[];
+  contentProjects: ContentProject[];
   activeCount: number;
   hooksCount: number;
-  topicsCount: number;
+  ideasCount: number;
   videosAnalyzed: number;
 }

@@ -1,6 +1,6 @@
 """Parse channel-profile.md to extract discovery config for executors.
 
-Shared module used by executors across thumbnail/ and topics/ domains.
+Shared module used by executors across thumbnail/ and ideas/ domains.
 """
 
 import re
@@ -78,6 +78,24 @@ def _parse_list_value(body: str, label: str) -> list[str]:
             value = line.split(":", 1)[1].strip()
             return [item.strip() for item in value.split(",") if item.strip()]
     return []
+
+
+def parse_thumbnail_channels(path: str) -> dict[str, str]:
+    """Read thumbnail-channels.md and return flat {channel_id: channel_name} dict.
+
+    Expects '- Name (UCxxx)' entries (no ### sub-headings required).
+    """
+    with open(path) as f:
+        text = f.read()
+
+    channels: dict[str, str] = {}
+    for line in text.splitlines():
+        entry_match = re.match(r"^-\s+(.+?)\s+\(([A-Za-z0-9_-]+)\)\s*$", line)
+        if entry_match:
+            name = entry_match.group(1).strip()
+            channel_id = entry_match.group(2).strip()
+            channels[channel_id] = name
+    return channels
 
 
 def _parse_monitored_channels(body: str) -> dict[str, dict[str, str]]:

@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Search YouTube for cross-niche outlier videos with transferable hooks.
 
-Uses curated keyword lists, monitored channel scanning, and exclusion filters
-from a config file to find high-performing videos from outside the user's niche.
-Filters out own-niche content and non-transferable formats, keeping only genuine
-outliers.
+Fetches recent videos from a curated list of thumbnail-quality channels
+(memory/thumbnail-channels.md), scores them by outlier performance, and
+downloads the top thumbnails.
 
-Two sources of cross-niche content:
-  A) Keyword search — samples from curated cross_niche_keywords
-  B) Channel monitoring — samples from monitored_channels and fetches recent videos
+Features:
+  - Rotation tracking: cycles through the full channel pool before repeating
+  - Seen-video tracking: prevents the same video from appearing across runs
+  - Topic relevance: boosts videos related to the current topic (+35%)
 
 Usage:
     python3 executors/thumbnail/cross_niche_research.py <output_dir> \
+        [--thumbnail-channels memory/thumbnail-channels.md] \
+        [--topic "retire early"] \
         [--config workspace/config/research_config.json] \
-        [--max-keywords 6] [--max-channels 8] [--count 100] \
-        [--min-outlier 1.5] [--exclude-channel UC...]
+        [--max-channels 20] [--count 70] [--min-outlier 1.5]
 
 Depends on: yt-dlp (brew install yt-dlp)
 """
@@ -32,14 +33,19 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from datetime import datetime, timedelta
 from typing import Optional
 
 _EXECUTORS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _EXECUTORS_DIR not in sys.path:
     sys.path.insert(0, _EXECUTORS_DIR)
-from shared.youtube import search_youtube, fetch_channel_recent_videos, enrich_video
-from shared.parse_profile import parse_channel_profile
+from shared.youtube import fetch_channel_recent_videos, enrich_video
+from shared.parse_profile import parse_channel_profile, parse_thumbnail_channels
 
+
+# ---------------------------------------------------------------------------
+# Thumbnail download
+# ---------------------------------------------------------------------------
 
 def download_thumbnail(video_id: str, output_path: str) -> Optional[str]:
     """Download the highest-quality thumbnail for a video ID."""
@@ -63,65 +69,12 @@ def download_thumbnail(video_id: str, output_path: str) -> Optional[str]:
     return None
 
 
-def fetch_transcript(video_id: str, output_path: str) -> Optional[str]:
-    """Fetch auto-generated subtitles for a video using yt-dlp.
-
-    Downloads the best available English auto-caption, converts to plain text
-    (vtt → stripped text), and saves to output_path. Returns the path on
-    success, None on failure.
-    """
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    # Write subtitles to a temp location, then convert
-    base = output_path.rsplit(".", 1)[0]
-    cmd = [
-        "yt-dlp",
-        url,
-        "--write-auto-sub",
-        "--sub-lang", "en",
-        "--sub-format", "vtt",
-        "--skip-download",
-        "--no-playlist",
-        "-o", base,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except subprocess.TimeoutExpired:
-        return None
-
-    # yt-dlp writes to <base>.en.vtt
-    vtt_path = f"{base}.en.vtt"
-    if not os.path.isfile(vtt_path):
-        return None
-
-    # Convert VTT to plain text (strip timestamps, tags, dedup lines)
-    try:
-        with open(vtt_path) as f:
-            raw = f.read()
-        lines: list[str] = []
-        seen: set[str] = set()
-        for line in raw.split("\n"):
-            line = line.strip()
-            # Skip VTT headers, timestamps, and empty lines
-            if not line or line.startswith("WEBVTT") or line.startswith("Kind:") \
-               or line.startswith("Language:") or "-->" in line or line[0:1].isdigit() and ":" in line:
-                continue
-            # Strip HTML-like tags
-            clean = re.sub(r"<[^>]+>", "", line).strip()
-            if clean and clean not in seen:
-                seen.add(clean)
-                lines.append(clean)
-        text = " ".join(lines)
-        with open(output_path, "w") as f:
-            f.write(text)
-        # Clean up VTT file
-        os.remove(vtt_path)
-        return output_path
-    except Exception:
-        return None
-
+# ---------------------------------------------------------------------------
+# Channel average views
+# ---------------------------------------------------------------------------
 
 def fetch_channel_average_views(channel_id: str) -> int | None:
-    """Fetch ~10 recent videos from a channel and calculate average views."""
+    """Fetch recent videos from a channel and calculate average views."""
     url = f"https://www.youtube.com/channel/{channel_id}/videos"
     cmd = [
         "yt-dlp",
@@ -158,7 +111,123 @@ def fetch_channel_average_views(channel_id: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Cross-niche specific logic
+# Seen-video tracking (cross-run deduplication)
+# ---------------------------------------------------------------------------
+
+def load_seen_file(path: str) -> dict:
+    """Load seen video tracking file. Returns empty structure if missing."""
+    if not os.path.isfile(path):
+        return {"seen": {}, "last_cleaned": ""}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {"seen": {}, "last_cleaned": ""}
+
+
+def save_seen_videos(path: str, new_video_ids: list[str], existing: dict) -> None:
+    """Add video IDs to seen file with today's date. Auto-prune >1 month old."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    seen = existing.get("seen", {})
+
+    # Add new entries
+    for vid_id in new_video_ids:
+        if vid_id not in seen:
+            seen[vid_id] = today
+
+    # Auto-prune entries older than 1 month
+    cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    last_cleaned = existing.get("last_cleaned", "")
+    if not last_cleaned or last_cleaned < cutoff:
+        seen = {k: v for k, v in seen.items() if v >= cutoff}
+        last_cleaned = today
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"seen": seen, "last_cleaned": last_cleaned}, f, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Rotation tracking (channel sampling fairness)
+# ---------------------------------------------------------------------------
+
+def load_rotation_file(path: str) -> dict[str, str]:
+    """Load channel rotation tracking. Returns empty dict if missing."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_rotation(path: str, channel_ids: list[str], existing: dict) -> None:
+    """Update last-sampled date for channels."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    for cid in channel_ids:
+        existing[cid] = today
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
+
+
+def sample_with_rotation(
+    channels: dict[str, str],
+    rotation: dict[str, str],
+    count: int,
+) -> list[tuple[str, str]]:
+    """Sample channels prioritizing least-recently-sampled.
+
+    Channels never sampled before get highest priority. Among channels with
+    the same last-sampled date, selection is random.
+    """
+    items = list(channels.items())
+    # Sort by last-sampled date (never-sampled = "" sorts first)
+    items.sort(key=lambda x: rotation.get(x[0], ""))
+    # Take the least-recently-sampled batch and randomly pick from it
+    if len(items) <= count:
+        return items
+    # Find the cutoff: take at least `count` items, expanding if there's a tie
+    cutoff_date = rotation.get(items[count - 1][0], "")
+    candidates = [x for x in items if rotation.get(x[0], "") <= cutoff_date]
+    return random.sample(candidates, min(count, len(candidates)))
+
+
+# ---------------------------------------------------------------------------
+# Topic relevance scoring
+# ---------------------------------------------------------------------------
+
+STOPWORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "through", "during",
+    "before", "after", "above", "below", "between", "and", "but", "or",
+    "nor", "not", "so", "yet", "both", "either", "neither", "each",
+    "every", "all", "any", "few", "more", "most", "other", "some",
+    "such", "no", "only", "own", "same", "than", "too", "very",
+    "just", "about", "how", "what", "why", "when", "where", "which",
+    "who", "whom", "this", "that", "these", "those", "i", "me", "my",
+    "you", "your", "he", "him", "his", "she", "her", "it", "its",
+    "we", "us", "our", "they", "them", "their",
+}
+
+
+def extract_topic_keywords(topic: str) -> list[str]:
+    """Extract meaningful keywords from a topic string."""
+    words = re.findall(r"[a-zA-Z0-9]+", topic.lower())
+    return [w for w in words if w not in STOPWORDS and len(w) > 1]
+
+
+def topic_matches_title(title: str, topic_keywords: list[str]) -> bool:
+    """Check if any topic keyword appears in the title."""
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in topic_keywords)
+
+
+# ---------------------------------------------------------------------------
+# Cross-niche filtering and scoring
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: str) -> dict:
@@ -167,21 +236,6 @@ def load_config(config_path: str) -> dict:
         raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path) as f:
         return json.load(f)
-
-
-def flatten_monitored_channels(monitored: dict) -> dict[str, str]:
-    """Flatten nested category → {channel_id: name} into a flat dict.
-
-    Config format:
-        {"business": {"UCxxx": "Alex Hormozi", ...}, "finance": {...}, ...}
-    Returns:
-        {"UCxxx": "Alex Hormozi", "UCyyy": "Graham Stephan", ...}
-    """
-    flat: dict[str, str] = {}
-    for _category, channels in monitored.items():
-        if isinstance(channels, dict):
-            flat.update(channels)
-    return flat
 
 
 def title_matches_terms(title: str, terms: list[str]) -> list[str]:
@@ -210,7 +264,6 @@ def filter_cross_niche(
     exclude_formats: list[str],
     min_view_count: int = 1000,
     min_duration: int = 180,
-    exclude_channel: str | None = None,
     min_subscribers: int | None = None,
 ) -> tuple[list[dict], dict]:
     """Apply cross-niche filters: own-niche, format, duration, views.
@@ -224,17 +277,11 @@ def filter_cross_niche(
         "filtered_views": 0,
         "filtered_duration": 0,
         "filtered_subscribers": 0,
-        "filtered_own_channel": 0,
     }
     filtered = []
 
     for vid in videos:
         title = vid.get("title") or ""
-
-        # Exclude own channel
-        if exclude_channel and vid.get("channel_id") == exclude_channel:
-            stats["filtered_own_channel"] += 1
-            continue
 
         # Exclude own-niche content
         if title_matches_terms(title, own_niche_terms):
@@ -267,17 +314,15 @@ def filter_cross_niche(
     return filtered, stats
 
 
-def apply_hook_modifiers(videos: list[dict], config: dict) -> None:
-    """Apply cross-niche hook modifiers to each video based on title text.
+def apply_hook_modifiers(
+    videos: list[dict],
+    config: dict,
+    topic_keywords: list[str] | None = None,
+) -> None:
+    """Apply hook modifiers to each video based on title text.
 
-    Modifiers are keyword-matched from ``hook_categories`` in the config.
-    Technical penalty is applied per technical term found.  The monitored
-    channel boost is data-driven (``_is_monitored`` flag).
-
-    Mutates each video dict in-place, adding:
-        modifiers      – list of human-readable modifier strings
-        modifier_sum   – float total of all modifiers
-        final_score    – base_score × (1 + modifier_sum)
+    Includes topic relevance boost (+35%) when topic_keywords are provided.
+    Mutates each video dict in-place.
     """
     hook_cats = config.get("hook_categories", {})
     tech_terms = [t.lower() for t in config.get("technical_terms", [])]
@@ -287,10 +332,10 @@ def apply_hook_modifiers(videos: list[dict], config: dict) -> None:
         mods: list[str] = []
         mod_sum = 0.0
 
-        # Monitored channel boost (data-driven, not text-based)
-        if vid.get("_is_monitored"):
-            mods.append("+0.25 (monitored channel)")
-            mod_sum += 0.25
+        # Topic relevance boost
+        if topic_keywords and topic_matches_title(vid.get("title", ""), topic_keywords):
+            mods.append("+0.35 (topic relevance)")
+            mod_sum += 0.35
 
         # Hook category modifiers (scan title)
         for cat_name, cat_data in hook_cats.items():
@@ -318,6 +363,10 @@ def apply_hook_modifiers(videos: list[dict], config: dict) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
         description="Search YouTube for cross-niche outlier videos with transferable hooks."
@@ -330,22 +379,38 @@ def main():
                             "..", "..", "workspace", "config", "research_config.json"
                         ),
                         help="Path to research_config.json config file")
-    parser.add_argument("--max-keywords", type=int, default=6,
-                        help="Number of keywords to randomly sample per run (default: 6)")
-    parser.add_argument("--max-channels", type=int, default=8,
-                        help="Number of monitored channels to randomly sample per run (default: 8)")
-    parser.add_argument("--count", type=int, default=100,
-                        help="Number of outlier thumbnails to keep (default: 100)")
+    parser.add_argument("--thumbnail-channels",
+                        default=os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "memory", "thumbnail-channels.md"
+                        ),
+                        help="Path to thumbnail-channels.md (curated channel list)")
+    parser.add_argument("--topic", default=None,
+                        help="Video topic for relevance scoring (e.g. 'retire early')")
+    parser.add_argument("--max-channels", type=int, default=20,
+                        help="Number of channels to sample per run (default: 20)")
+    parser.add_argument("--count", type=int, default=70,
+                        help="Number of outlier thumbnails to keep (default: 70)")
     parser.add_argument("--min-outlier", type=float, default=1.5,
                         help="Minimum outlier score to keep (default: 1.5)")
-    parser.add_argument("--exclude-channel",
-                        help="YouTube channel ID to exclude (e.g., UCxxx)")
     parser.add_argument("--channel-profile",
                         default=os.path.join(
                             os.path.dirname(os.path.abspath(__file__)),
                             "..", "..", "memory", "channel-profile.md"
                         ),
                         help="Path to channel-profile.md (source of niche terms)")
+    parser.add_argument("--seen-file",
+                        default=os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "workspace", "config", "thumbnail_seen.json"
+                        ),
+                        help="Path to seen-video tracking file")
+    parser.add_argument("--rotation-file",
+                        default=os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "..", "..", "workspace", "config", "thumbnail_rotation.json"
+                        ),
+                        help="Path to channel rotation tracking file")
     args = parser.parse_args()
 
     start = time.time()
@@ -357,12 +422,26 @@ def main():
         print(json.dumps({"status": "error", "error": str(e)}))
         sys.exit(1)
 
-    # Channel-specific config from profile
+    # Load curated thumbnail channels
+    channels_path = args.thumbnail_channels
+    if not os.path.isfile(channels_path):
+        print(json.dumps({
+            "status": "error",
+            "error": f"Thumbnail channels file not found: {channels_path}. "
+                     "Create memory/thumbnail-channels.md with curated channels.",
+        }))
+        sys.exit(1)
+
+    curated_channels = parse_thumbnail_channels(channels_path)
+    if not curated_channels:
+        print(json.dumps({
+            "status": "error",
+            "error": "No channels found in thumbnail-channels.md.",
+        }))
+        sys.exit(1)
+
+    # Channel-specific config from profile (for niche term filtering)
     profile = parse_channel_profile(args.channel_profile)
-    keywords = profile.get("cross_niche_keywords", [])
-    monitored_channels_raw = profile.get("monitored_channels", {})
-    monitored_channels = flatten_monitored_channels(monitored_channels_raw)
-    monitored_channel_ids: set[str] = set(monitored_channels.keys())
     own_niche_terms = profile.get("niche_terms", [])
 
     # System config from research_config.json
@@ -371,53 +450,37 @@ def main():
     min_subscribers = constants.get("min_subscribers", 100000)
     min_view_count = constants.get("min_view_count", 1000)
     min_duration = constants.get("min_video_duration_seconds", 180)
-    max_per_keyword = constants.get("max_videos_per_keyword", 30)
 
-    if not keywords and not monitored_channels:
-        print(json.dumps({
-            "status": "error",
-            "error": "No Cross-Niche Keywords or Monitored Channels found in channel profile.",
-        }))
-        sys.exit(1)
+    # Topic relevance keywords
+    topic_keywords = extract_topic_keywords(args.topic) if args.topic else None
+
+    # Load tracking state
+    seen_data = load_seen_file(args.seen_file)
+    seen_ids = set(seen_data.get("seen", {}).keys())
+    rotation = load_rotation_file(args.rotation_file)
+
+    # Sample channels with rotation
+    sampled = sample_with_rotation(curated_channels, rotation, args.max_channels)
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     all_videos: list[dict] = []
-    search_errors: list[str] = []
-    videos_from_keywords = 0
-    videos_from_channels = 0
+    scan_errors: list[str] = []
 
-    # --- Source A: Keyword search (parallel) ---
-    sampled_keywords = []
-    if keywords:
-        sampled_keywords = random.sample(keywords, min(args.max_keywords, len(keywords)))
-
-    # --- Source B: Monitored channel scanning (parallel) ---
-    sampled_channels: list[tuple[str, str]] = []
-    if monitored_channels:
-        channel_items = list(monitored_channels.items())  # flat: [(id, name), ...]
-        sampled_channels = random.sample(channel_items, min(args.max_channels, len(channel_items)))
-
-    # Run keyword searches and channel scans concurrently
+    # Fetch recent videos from sampled channels (parallel)
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        keyword_futures = {}
-        for keyword in sampled_keywords:
-            future = pool.submit(search_youtube, keyword, max_per_keyword)
-            keyword_futures[future] = keyword
-
         channel_futures = {}
-        for channel_id, channel_name in sampled_channels:
-            future = pool.submit(fetch_channel_recent_videos, channel_id, channel_name, max_videos=10)
+        for channel_id, channel_name in sampled:
+            future = pool.submit(fetch_channel_recent_videos, channel_id, channel_name, max_videos=5)
             channel_futures[future] = (channel_id, channel_name)
 
-        for future in concurrent.futures.as_completed(keyword_futures):
-            keyword = keyword_futures[future]
+        for future in concurrent.futures.as_completed(channel_futures):
+            channel_id, channel_name = channel_futures[future]
             try:
                 videos = future.result()
                 for v in videos:
-                    v["_source"] = "keyword"
-                    v["_search_keyword"] = keyword
-                videos_from_keywords += len(videos)
+                    v["_source"] = "curated"
+                    v["_source_channel"] = channel_name
                 all_videos.extend(videos)
             except FileNotFoundError:
                 print(json.dumps({
@@ -425,41 +488,30 @@ def main():
                     "error": "yt-dlp not found. Install with: brew install yt-dlp",
                 }))
                 sys.exit(1)
-            except RuntimeError as e:
-                search_errors.append(f"keyword '{keyword}': {e}")
-
-        for future in concurrent.futures.as_completed(channel_futures):
-            channel_id, channel_name = channel_futures[future]
-            try:
-                videos = future.result()
-                for v in videos:
-                    v["_source"] = "channel"
-                    v["_source_channel"] = channel_name
-                videos_from_channels += len(videos)
-                all_videos.extend(videos)
             except Exception as e:
-                search_errors.append(f"channel '{channel_name}': {e}")
+                scan_errors.append(f"channel '{channel_name}': {e}")
 
     if not all_videos:
         print(json.dumps({
             "status": "error",
-            "error": f"No results from any source. Errors: {search_errors}",
+            "error": f"No results from any channel. Errors: {scan_errors}",
         }))
         sys.exit(1)
 
-    # Deduplicate by video_id
-    seen_ids: set[str] = set()
+    # Deduplicate by video_id (within this run)
+    dedup_ids: set[str] = set()
     unique_videos: list[dict] = []
     for vid in all_videos:
         vid_id = vid.get("video_id")
-        if vid_id and vid_id not in seen_ids:
-            seen_ids.add(vid_id)
+        if vid_id and vid_id not in dedup_ids:
+            dedup_ids.add(vid_id)
             unique_videos.append(vid)
     duplicates_removed = len(all_videos) - len(unique_videos)
 
-    # Tag monitored channel status (applies to keyword-sourced videos too)
-    for vid in unique_videos:
-        vid["_is_monitored"] = vid.get("channel_id") in monitored_channel_ids
+    # Filter out previously seen videos (cross-run dedup)
+    before_seen = len(unique_videos)
+    unique_videos = [v for v in unique_videos if v.get("video_id") not in seen_ids]
+    seen_filtered = before_seen - len(unique_videos)
 
     # Apply cross-niche filters (own-niche, format, views, duration, subscribers)
     videos, filter_stats = filter_cross_niche(
@@ -468,27 +520,25 @@ def main():
         exclude_formats,
         min_view_count=min_view_count,
         min_duration=min_duration,
-        exclude_channel=args.exclude_channel,
         min_subscribers=min_subscribers,
     )
 
     if not videos:
         print(json.dumps({
             "status": "error",
-            "error": "All results were filtered out. Try more keywords or relax filters.",
+            "error": "All results were filtered out. Add more channels to thumbnail-channels.md.",
             "filter_stats": filter_stats,
-            "keywords_searched": sampled_keywords,
+            "channels_sampled": [name for _, name in sampled],
         }))
         sys.exit(1)
 
     # Enrich with computed fields
     videos = [enrich_video(v) for v in videos]
 
-    # Fetch channel average views and calculate outlier scores (always-on)
+    # Fetch channel average views and calculate outlier scores
     unique_channel_ids = {v.get("channel_id") for v in videos if v.get("channel_id")}
     channel_cache: dict[str, int | None] = {}
 
-    # Fetch all channel averages in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         future_to_cid = {
             pool.submit(fetch_channel_average_views, cid): cid
@@ -508,7 +558,6 @@ def main():
         cid = vid.get("channel_id")
         avg = channel_cache.get(cid) if cid else None
         if avg is None:
-            # Fallback: estimate average as 2% of subscriber count
             subs = vid.get("channel_subscribers") or 0
             avg = max(int(subs * 0.02), 1)
         vid["channel_average_views"] = avg
@@ -520,22 +569,24 @@ def main():
     for vid in videos:
         days = vid.get("days_since_upload")
         if days is not None:
-            if days <= 30:
+            if days <= 7:
+                vid["recency_multiplier"] = 1.30
+            elif days <= 30:
                 vid["recency_multiplier"] = 1.15
             elif days <= 90:
-                vid["recency_multiplier"] = 1.10
-            elif days <= 180:
                 vid["recency_multiplier"] = 1.0
+            elif days <= 180:
+                vid["recency_multiplier"] = 0.85
             else:
-                vid["recency_multiplier"] = 0.95
+                vid["recency_multiplier"] = 0.70
         else:
             vid["recency_multiplier"] = 1.0
 
         outlier = vid.get("outlier_score", 1.0)
         vid["base_score"] = round(outlier * vid["recency_multiplier"], 2)
 
-    # Apply cross-niche hook modifiers (title-based keyword matching)
-    apply_hook_modifiers(videos, config)
+    # Apply hook modifiers (title-based keyword matching + topic relevance)
+    apply_hook_modifiers(videos, config, topic_keywords)
 
     # Filter by minimum outlier score
     before_outlier = len(videos)
@@ -546,29 +597,24 @@ def main():
         print(json.dumps({
             "status": "error",
             "error": f"No videos above outlier threshold ({args.min_outlier}). "
-                     "Try lowering --min-outlier or searching more keywords.",
+                     "Try lowering --min-outlier or adding more channels.",
             "filter_stats": filter_stats,
-            "keywords_searched": sampled_keywords,
+            "channels_sampled": [name for _, name in sampled],
         }))
         sys.exit(1)
 
-    # Sort by final score (with modifiers) descending, take top N
+    # Sort by final score descending, take top N
     videos.sort(key=lambda v: v.get("final_score", v.get("outlier_score", 0)), reverse=True)
     videos = videos[:args.count]
 
-    # Download thumbnails + fetch transcripts (parallel)
+    # Download thumbnails (parallel)
     thumbnails = []
     for i, vid in enumerate(videos):
         vid["index"] = i
         vid["thumbnail_url"] = f"https://img.youtube.com/vi/{vid['video_id']}/maxresdefault.jpg"
         thumbnails.append(vid)
 
-    transcript_dir = os.path.join(args.output_dir, "transcripts")
-    os.makedirs(transcript_dir, exist_ok=True)
-    transcripts_fetched = 0
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-        # Submit thumbnail downloads
         thumb_futures = {}
         for vid in thumbnails:
             filename = f"thumb_{vid['index']:02d}_{vid['video_id']}.jpg"
@@ -576,14 +622,6 @@ def main():
             future = pool.submit(download_thumbnail, vid["video_id"], filepath)
             thumb_futures[future] = vid
 
-        # Submit transcript fetches
-        tx_futures = {}
-        for vid in thumbnails:
-            tx_path = os.path.join(transcript_dir, f"{vid['video_id']}.txt")
-            future = pool.submit(fetch_transcript, vid["video_id"], tx_path)
-            tx_futures[future] = vid
-
-        # Collect thumbnail results
         for future in concurrent.futures.as_completed(thumb_futures):
             vid = thumb_futures[future]
             try:
@@ -592,21 +630,16 @@ def main():
             except Exception:
                 vid["local_path"] = None
 
-        # Collect transcript results
-        for future in concurrent.futures.as_completed(tx_futures):
-            vid = tx_futures[future]
-            try:
-                tx_result = future.result()
-                vid["transcript_path"] = os.path.abspath(tx_result) if tx_result else None
-                if tx_result:
-                    transcripts_fetched += 1
-            except Exception:
-                vid["transcript_path"] = None
-
     # Save metadata
     metadata_path = os.path.join(args.output_dir, "metadata.json")
     with open(metadata_path, "w") as f:
         json.dump(thumbnails, f, indent=2)
+
+    # Update tracking state
+    result_video_ids = [v["video_id"] for v in thumbnails if v.get("video_id")]
+    save_seen_videos(args.seen_file, result_video_ids, seen_data)
+    sampled_channel_ids = [cid for cid, _ in sampled]
+    save_rotation(args.rotation_file, sampled_channel_ids, rotation)
 
     downloaded = sum(1 for t in thumbnails if t["local_path"] is not None)
     elapsed = round(time.time() - start, 2)
@@ -615,30 +648,30 @@ def main():
 
     result = {
         "status": "success",
-        "query": f"cross-niche ({len(sampled_keywords)} keywords + {len(sampled_channels)} channels)",
-        "keywords_searched": sampled_keywords,
-        "channels_scanned": [name for _, name in sampled_channels],
-        "videos_from_keywords": videos_from_keywords,
-        "videos_from_channels": videos_from_channels,
+        "query": f"curated channels ({len(sampled)} of {len(curated_channels)} sampled)",
+        "channels_sampled": [name for _, name in sampled],
+        "total_curated_channels": len(curated_channels),
+        "videos_scanned": len(all_videos),
+        "duplicates_removed": duplicates_removed,
+        "seen_filtered": seen_filtered,
         "channels_fetched": channels_fetched,
         "thumbnails_downloaded": downloaded,
         "thumbnails_total": len(thumbnails),
-        "videos_scanned": len(all_videos),
-        "duplicates_removed": duplicates_removed,
         "filtered_own_niche": filter_stats.get("filtered_own_niche", 0),
         "filtered_formats": filter_stats.get("filtered_formats", 0),
         "filtered_views": filter_stats.get("filtered_views", 0),
         "filtered_duration": filter_stats.get("filtered_duration", 0),
         "filtered_subscribers": filter_stats.get("filtered_subscribers", 0),
         "filtered_below_outlier": outlier_filtered,
-        "transcripts_fetched": transcripts_fetched,
+        "topic": args.topic,
+        "topic_keywords": topic_keywords,
         "output_dir": os.path.abspath(args.output_dir),
         "metadata_file": os.path.abspath(metadata_path),
         "elapsed_seconds": elapsed,
         "elapsed_formatted": elapsed_fmt,
     }
-    if search_errors:
-        result["search_errors"] = search_errors
+    if scan_errors:
+        result["scan_errors"] = scan_errors
 
     print(json.dumps(result))
 

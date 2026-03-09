@@ -122,7 +122,7 @@
   },
 
   "constants": {
-    "max_videos_per_keyword": 30,
+    "max_videos_per_keyword": 20,
     "days_back": 90,
     "min_outlier_score": 1.5,
     "min_video_duration_seconds": 180,

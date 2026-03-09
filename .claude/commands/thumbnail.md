@@ -40,7 +40,36 @@ If no projects exist or user wants to start new: proceed to Step 2.
 
 ## Step 2 — Gather Topic and Visual Preferences
 
-If `inline_topic` is set, use it. Otherwise:
+### Auto-detect topic from /write pipeline
+
+If `inline_topic` is NOT set, check for active or completed research projects:
+
+```bash
+ls workspace/temp/research/*/state.json 2>/dev/null
+```
+
+For each `state.json` where `phase` is `"outline"`, `"script"`, or `"complete"`:
+- Read the `topic` field
+- Derive `content_slug` (from `content_slug` field, or strip `YYYYMMDD_` prefix)
+
+If matching research projects exist, present them:
+
+```
+I found these scripts from /write:
+  1. "I asked 3 AIs to pick strong & undervalued stocks" (script phase)
+  2. "Top Funds to Invest in 2026" (complete)
+```
+
+Offer via AskUserQuestion:
+- Pick a listed topic (pre-populates `inline_topic` and `content_slug`)
+- **Different topic** — enter manually
+
+If the user picks a /write topic, set `inline_topic` to that topic and carry the
+`content_slug` into this project's `state.json`.
+
+### Topic input
+
+If `inline_topic` is set (from arguments, or from the handoff above), use it. Otherwise:
 - **Do NOT ask for the video title/topic.** Simply prompt the user to share their
   video title or topic in free text (no multiple-choice options). Infer the topic
   from whatever the user types next.

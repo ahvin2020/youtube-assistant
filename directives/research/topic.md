@@ -24,16 +24,12 @@ structure, and script length throughout the pipeline.
 
 ### Short-Form (1-minute reels)
 - Research is **optional** — user may already know the point and just need a script
+- **Accepts existing material as input**: user can provide an existing script, topic from
+  a previous `/write` project, or any source text to adapt into short-form
 - Single-focus outline — one key insight, no tangents
 - Script target: ~150–250 words (~60–90 seconds at speaking pace)
 - Must be punchy: immediate hook, fast payoff, no fluff
 - Every sentence must earn its place — if it doesn't add value, cut it
-
-### Spin-Off Reels (from existing long-form project)
-- Reuses the parent project's `brief.md` — no new research needed
-- Extract one sharp angle from the long-form research
-- Each reel gets its own outline and script file (`reel-1.md`, `reel-2.md`, etc.)
-- Multiple reels can be spun off from a single long-form project
 
 ### Brand-Mention (Sponsored Segments)
 - **Two placement types**:
@@ -265,7 +261,7 @@ All output goes to a **single markdown file per phase** in the project directory
 - <how to end>
 ```
 
-### Outline — Short-Form (`outline.md` or `reel-N.md`)
+### Outline — Short-Form (`outline.md`)
 
 ```markdown
 # Reel Outline: <Topic>
@@ -348,6 +344,12 @@ sponsor into the main video). Standalone uses a hook instead.
 
 ### Script — Long-Form (`script.md`)
 
+**No em dashes in scripts**: Scripts are spoken word, not written prose. Never use em
+dashes (—) in script text. Use a period and a new sentence instead. Em dashes create
+awkward teleprompter reads and unnatural pauses. Example:
+- Wrong: "136 degree programmes at all six local universities — and the numbers are not pretty."
+- Right: "136 degree programmes at all six local universities. And the numbers are not pretty."
+
 **Source citation formatting**: When citing a source in the script, the `[Source: ...]`
 line must be on its **own line below** the sentence it supports, never on the same line.
 ```
@@ -397,7 +399,7 @@ referrals. I'm part of an affiliate network and I receive compensation
 from partnering websites.
 ```
 
-### Script — Short-Form (`script.md` or `reel-N.md`)
+### Script — Short-Form (`script.md`)
 
 ```markdown
 # Reel Script: <Topic>
@@ -443,6 +445,34 @@ are no mandatory phrases, omit that row entirely).
 
 ---
 
+## Data Freshness
+
+Your training data has a knowledge cutoff and WILL be stale for anything time-sensitive.
+Never rely on training knowledge for data that changes over time.
+
+**Always web-search for the latest data when the topic involves**:
+- Company earnings, revenue, financials, or stock prices
+- Interest rates, inflation numbers, GDP, or any economic indicators
+- Fund performance, AUM, expense ratios, or holdings
+- Policy changes (CPF rates, tax brackets, government schemes)
+- Market indices, commodity prices, or exchange rates
+- Any statistic where the user expects the most recent figure
+
+**Rules**:
+1. **Default to searching** — if there is any chance a number has changed since your
+   training cutoff, search for it. The cost of a redundant search is near zero; the cost
+   of citing stale data in a published video is high.
+2. **State the date of the data** — always include "as of [month year]" or the exact
+   reporting period (e.g., "Q4 2025 earnings") next to any time-sensitive figure.
+3. **Never silently use training data for numbers** — if a web search fails to find the
+   latest figure, explicitly tell the user: "I couldn't find the latest data for X. The
+   most recent I have is from [date] — please verify before using."
+4. **Cross-check stale-looking results** — if a search result looks outdated (e.g., an
+   article from 2 years ago), search again with a date-restricted query or try a
+   different source before accepting it.
+
+---
+
 ## What NOT to Do
 
 - Do not advance phases without explicit user instruction
@@ -455,6 +485,8 @@ are no mandatory phrases, omit that row entirely).
 - Do not fabricate product claims in brand-mention scripts — only state what the brand brief provides
 - Do not skip requirements checklist validation before finalizing brand-mention scripts
 - Do not use em dashes (—) in scripts — scripts are spoken aloud, not read. Use periods, commas, or line breaks instead. Em dashes are fine in briefs and outlines (written documents), but never in script.md output.
+- Do not write long-winded preambles or filler transitions between sections. Get to the data fast. Cut throat-clearing lines like "So here's where it gets interesting" or "Let's take a look at X." The viewer already clicked — don't make them wait for the payoff. Every sentence must either deliver new information or set up the next piece of information.
+- Do not repeat information already covered in an earlier section. If the hook established a stat or framing, the next section should build on it, not restate it. Assume the viewer watched the previous 30 seconds.
 
 ---
 
@@ -496,14 +528,12 @@ are no mandatory phrases, omit that row entirely).
 
 ### When to Offer
 - After the user says "script done" (long-form, short-form, or brand-mention), before the completion summary
-- After the user says "reels done" (spin-off reels), before the completion summary
 - Do NOT offer export during iterative loops — only at finalization
 
 ### Rules
 - Always ask before exporting — never auto-export
 - Use the executor: `executors/research/export_google_doc.py` — do not reimplement
-- Document title: `"Script: <topic>"` (or `"Reel <N>: <topic>"` for spin-offs,
-  or `"Brand Mention: <product/brand>"` for brand-mention)
+- Document title: `"Script: <topic>"` (or `"Brand Mention: <product/brand>"` for brand-mention)
 - If `credentials.json` is missing, provide setup instructions and proceed without export
 - If export fails for any reason, inform the user and proceed — the local file is always
   the source of truth

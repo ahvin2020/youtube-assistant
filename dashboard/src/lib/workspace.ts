@@ -1,11 +1,11 @@
 import fs from "fs/promises";
 import path from "path";
-import { Domain, DOMAIN_PHASES, Project, BaseState, DashboardData } from "./types";
+import { Domain, DOMAIN_PHASES, Project, BaseState, ContentProject, DashboardData } from "./types";
 
 // Workspace root is the parent of the dashboard/ directory
 const WORKSPACE_ROOT = path.resolve(process.cwd(), "..");
 
-const DOMAINS: Domain[] = ["research", "thumbnail", "topics", "analyze", "video"];
+const DOMAINS: Domain[] = ["research", "thumbnail", "ideas", "analyze", "video"];
 
 function slugToDisplayName(slug: string): string {
   // Remove date prefix (YYYYMMDD_) and humanize
@@ -91,7 +91,7 @@ export async function getAllProjects(): Promise<Project[]> {
         // Check domain-specific sheet configs
         const configNames: Record<string, string> = {
           thumbnail: "research_sheet.json",
-          topics: "intelligence_sheet.json",
+          ideas: "intelligence_sheet.json",
           analyze: "analysis_sheet.json",
         };
         const configName = configNames[domain];
@@ -139,15 +139,15 @@ export async function getDashboardData(): Promise<DashboardData> {
   const hooksData = await readJson<{ hooks?: unknown[] }>(hooksPath);
   const hooksCount = hooksData?.hooks?.length || 0;
 
-  // Topics count — find latest topics analysis
-  const topicsOutputDir = path.join(WORKSPACE_ROOT, "workspace", "output", "topics");
-  const topicsSlugs = await listDirs(topicsOutputDir);
-  let topicsCount = 0;
-  if (topicsSlugs.length > 0) {
-    const latestSlug = topicsSlugs.sort().pop()!;
-    const analysisPath = path.join(topicsOutputDir, latestSlug, "topics_analysis.json");
+  // Ideas count — find latest ideas analysis
+  const ideasOutputDir = path.join(WORKSPACE_ROOT, "workspace", "output", "ideas");
+  const ideaSlugs = await listDirs(ideasOutputDir);
+  let ideasCount = 0;
+  if (ideaSlugs.length > 0) {
+    const latestSlug = ideaSlugs.sort().pop()!;
+    const analysisPath = path.join(ideasOutputDir, latestSlug, "ideas_analysis.json");
     const analysis = await readJson<unknown[]>(analysisPath);
-    topicsCount = analysis?.length || 0;
+    ideasCount = analysis?.length || 0;
   }
 
   // Videos analyzed
@@ -161,7 +161,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     if (state?.videos_analyzed) videosAnalyzed += state.videos_analyzed;
   }
 
-  return { projects, activeCount, hooksCount, topicsCount, videosAnalyzed };
+  const contentProjects = groupByContentSlug(projects);
+  return { projects, contentProjects, activeCount, hooksCount, ideasCount, videosAnalyzed };
 }
 
 export async function getProjectDetail(domain: Domain, slug: string) {
@@ -174,6 +175,44 @@ export async function getProjectDetail(domain: Domain, slug: string) {
   const hasOutput = await dirExists(outputDir);
 
   return { domain, slug, state, tempFiles, outputFiles, hasOutput };
+}
+
+function deriveContentSlug(slug: string): string {
+  return slug.replace(/^\d{8}_/, "");
+}
+
+export function groupByContentSlug(projects: Project[]): ContentProject[] {
+  const groups = new Map<string, ContentProject>();
+
+  for (const project of projects) {
+    const cs =
+      (project.state as Record<string, unknown>)?.content_slug as string ||
+      deriveContentSlug(project.slug);
+
+    if (!groups.has(cs)) {
+      groups.set(cs, {
+        contentSlug: cs,
+        displayName: project.displayName,
+        stages: {},
+        lastUpdated: project.updated,
+      });
+    }
+
+    const group = groups.get(cs)!;
+    // If domain already has an entry, keep the most recently updated one
+    const existing = group.stages[project.domain];
+    if (!existing || project.updated > existing.updated) {
+      group.stages[project.domain] = project;
+    }
+    if (project.updated > group.lastUpdated) {
+      group.lastUpdated = project.updated;
+      group.displayName = project.displayName;
+    }
+  }
+
+  return [...groups.values()].sort(
+    (a, b) => b.lastUpdated.localeCompare(a.lastUpdated)
+  );
 }
 
 export { WORKSPACE_ROOT };

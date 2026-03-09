@@ -118,28 +118,6 @@ def _timestamp_to_seconds(ts: str) -> float:
     return hours * 3600 + minutes * 60 + seconds
 
 
-def fetch_video_metadata(url: str) -> dict:
-    """Fetch video title, channel, and duration using yt-dlp."""
-    cmd = [
-        "yt-dlp",
-        "--no-download",
-        "--print", "%(title)s",
-        "--print", "%(channel)s",
-        "--print", "%(duration)s",
-        url,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        return {"title": "Unknown", "channel": "Unknown", "duration_seconds": 0}
-
-    lines = result.stdout.strip().split("\n")
-    return {
-        "title": lines[0] if len(lines) > 0 else "Unknown",
-        "channel": lines[1] if len(lines) > 1 else "Unknown",
-        "duration_seconds": int(float(lines[2])) if len(lines) > 2 and lines[2].replace(".", "").isdigit() else 0,
-    }
-
-
 def fetch_transcript(url: str, output_path: str) -> None:
     """Fetch transcript from YouTube and write to output_path as JSON."""
     check_dependencies()
@@ -148,33 +126,48 @@ def fetch_transcript(url: str, output_path: str) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         output_template = os.path.join(tmpdir, "subs")
 
-        # Try manual English subtitles first, then auto-generated
+        # Try auto-generated first (most common), then manual, then any
         sub_strategies = [
-            # Strategy 1: Manual English subs
-            ["--write-subs", "--sub-langs", "en", "--skip-download"],
-            # Strategy 2: Auto-generated English subs
+            # Strategy 1: Auto-generated English subs (most videos have these)
             ["--write-auto-subs", "--sub-langs", "en", "--skip-download"],
+            # Strategy 2: Manual English subs
+            ["--write-subs", "--sub-langs", "en", "--skip-download"],
             # Strategy 3: Any available subs
             ["--write-auto-subs", "--write-subs", "--sub-langs", "en.*,a]en.*", "--skip-download"],
         ]
 
         vtt_content: str | None = None
+        metadata = {"title": "Unknown", "channel": "Unknown", "duration_seconds": 0}
 
         for strategy in sub_strategies:
             # Clean temp dir of previous attempts
             for f in os.listdir(tmpdir):
                 os.remove(os.path.join(tmpdir, f))
 
+            # Combine subtitle fetch + metadata in a single yt-dlp call
             cmd = [
                 "yt-dlp",
                 *strategy,
                 "--sub-format", "vtt",
                 "--convert-subs", "vtt",
+                "--print", "%(title)s",
+                "--print", "%(channel)s",
+                "--print", "%(duration)s",
                 "-o", output_template,
                 url,
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+            # Parse metadata from stdout (--print lines appear first)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                if len(lines) >= 3:
+                    metadata = {
+                        "title": lines[0],
+                        "channel": lines[1],
+                        "duration_seconds": int(float(lines[2])) if lines[2].replace(".", "").isdigit() else 0,
+                    }
 
             # Look for any .vtt file in the temp dir
             vtt_files = [f for f in os.listdir(tmpdir) if f.endswith(".vtt")]
@@ -193,9 +186,6 @@ def fetch_transcript(url: str, output_path: str) -> None:
         # Parse VTT into segments
         segments = parse_vtt_to_segments(vtt_content)
         full_text = " ".join(seg["text"] for seg in segments)
-
-        # Fetch metadata
-        metadata = fetch_video_metadata(url)
 
         # Build output
         output = {

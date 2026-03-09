@@ -1,6 +1,6 @@
 """Shared YouTube data-fetching utilities.
 
-Used by executors/thumbnail/ and executors/topics/ for YouTube search,
+Used by executors/thumbnail/ and executors/ideas/ for YouTube search,
 channel video fetching, and video metadata enrichment.
 
 Depends on: yt-dlp (brew install yt-dlp)
@@ -163,15 +163,12 @@ def batch_enrich_metadata(videos: list[dict], max_workers: int = 10) -> list[dic
     return videos
 
 
-def enrich_video(vid: dict) -> dict:
+def enrich_video(vid: dict, shorts_aware: bool = False) -> dict:
     """Add computed fields to a video entry.
 
     Adds: views_per_subscriber, like_view_ratio, duration_category,
-    days_since_upload.
-
-    Note: Uses thumbnail/research duration thresholds (short < 300s).
-    For Shorts-aware classification (short < 60s + is_short flag),
-    see the inline version in executors/topics/youtube_topics.py.
+    days_since_upload.  When shorts_aware=True, also adds is_short
+    and uses 60s threshold (for ideas pipeline).
     """
     views = vid.get("view_count") or 0
     subs = vid.get("channel_subscribers") or 0
@@ -180,12 +177,23 @@ def enrich_video(vid: dict) -> dict:
     vid["like_view_ratio"] = round(likes / views, 4) if views > 0 else None
 
     duration = vid.get("duration") or 0
-    if duration < 300:
-        vid["duration_category"] = "short"
-    elif duration <= 900:
-        vid["duration_category"] = "medium"
+    if shorts_aware:
+        if duration < 60:
+            vid["duration_category"] = "short"
+            vid["is_short"] = True
+        elif duration < 300:
+            vid["duration_category"] = "medium"
+            vid["is_short"] = False
+        else:
+            vid["duration_category"] = "long"
+            vid["is_short"] = False
     else:
-        vid["duration_category"] = "long"
+        if duration < 300:
+            vid["duration_category"] = "short"
+        elif duration <= 900:
+            vid["duration_category"] = "medium"
+        else:
+            vid["duration_category"] = "long"
 
     upload = vid.get("upload_date")
     if upload:

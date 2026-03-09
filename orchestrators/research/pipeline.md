@@ -21,26 +21,18 @@ If directories exist (format: `YYYYMMDD_<slug>`), read each project's `state.jso
 ```
 Existing research projects:
   1. 20260228_dca-vs-lump-sum (Format: long-form, Phase: outline, Last updated: 2026-02-28)
-  2. 20260301_fed-rate-cut-impact (Phase: research-complete ✓ — ready for writing, Last updated: 2026-03-01)
+  2. 20260301_fed-rate-cut-impact (Format: long-form, Phase: research, Last updated: 2026-03-01)
   3. 20260304_moomoo (Format: brand-mention, Phase: script, Last updated: 2026-03-04)
 
 Resume one of these, or start a new project?
 ```
 
-**Phase display rules**:
-- `research-complete` → show as "research-complete ✓ — ready for writing" (brief done via /research, no format yet)
-- All other phases → show as before
-
 If the user chooses to resume:
 
-- **If phase is `research-complete`** (created by `/research`): the brief is done but no
-  format has been chosen yet. Ask the user for format (long-form, short-form, brand-mention)
-  and any angle/constraints. Set `format` in `state.json`, set `phase` to `"outline"`,
-  and jump to Phase 2 (Outline).
-- **If phase is `research`** and a `brief.md` exists: the user started research (possibly
-  via `/research`) but didn't finish. Ask if they want to continue research or move to
-  outline. If continuing research, re-enter Phase 1 iterative loop. If moving to outline,
-  ask for format, update `state.json`, and jump to Phase 2.
+- **If phase is `research`** and a `brief.md` exists: ask if they want to continue research
+  or move to outline. If continuing research, re-enter Phase 1 iterative loop. If moving
+  to outline, update `state.json` phase to `"outline"`, and jump to Phase 2.
+- **If phase is `research`** and no `brief.md` exists: re-enter Phase 1 from the start.
 - **All other phases**: read the project's `state.json`, then skip to the current phase's
   iterative loop (pick up where they left off by reading the existing `brief.md`,
   `outline.md`, or `script.md`). For brand-mention projects, also reload `brand_brief`
@@ -54,24 +46,30 @@ If no projects exist or the user wants a new one: proceed to Step 1.
 
 Ask the user:
 1. **What topic do you want to write about?**
-2. **What format?** Long-form video, short-form reel, spin-off reels from an existing project,
-   or brand-mention (sponsored segment)?
+2. **What format?** Long-form video, short-form reel, or brand-mention (sponsored segment)?
 3. **Any specific angle, context, or constraints?** (e.g., "focused on Singapore investors",
    "I want to argue against this", "news just broke today")
 
-If the user chose **spin-off reels**: jump to the [Spin-Off Reels](#spin-off-reels) section below.
-
 If the user chose **brand-mention**: jump to the [Brand-Mention Requirements Gathering](#brand-mention-requirements-gathering) section below.
 
-From the user's answer, determine:
+From the user's answer (or from `--idea-context` if handed off from `/idea`), determine:
 - **Format**: `long-form` or `short-form`
 - **Research mode**: Topic Deep-Dive, News Reaction, Strategy Comparison, or AI Scenario Analysis
   (see `directives/research/topic.md` for definitions)
 - **Slug**: a URL-safe lowercase version of the topic (e.g., "DCA vs Lump Sum" → `dca-vs-lump-sum`)
 - **PROJECT**: `YYYYMMDD_<slug>` using today's date (e.g., `20260303_dca-vs-lump-sum`)
+- **Idea context**: if `--idea-context <path>` was provided, read the JSON file. It contains
+  `topic`, `suggested_angle`, and `hook_ideas` from the `/idea` pipeline. Skip asking the
+  user for topic/angle — use these directly. Store the path in `state.json` under `idea_context`.
 
 **For short-form only**: ask whether the user wants a research phase or wants to skip
-straight to outlining. If they already know their point, research can be skipped.
+straight to outlining. The user can:
+- Provide an **existing script or topic** from a previous `/write` project to adapt
+- Provide any **source text** (article, notes, talking points) to turn into a short-form script
+- Start fresh with just a topic (with or without research)
+
+If the user provides existing material, save it to
+`workspace/temp/research/<PROJECT>/source_material.md` and skip research (set phase to `"outline"`).
 
 Create the project directory and state file:
 
@@ -85,11 +83,13 @@ Write `workspace/temp/research/<PROJECT>/state.json`:
 {
   "topic": "<user's topic>",
   "slug": "<slug>",
+  "content_slug": "<slug>",
   "format": "<long-form | short-form | brand-mention>",
   "mode": "<research_mode | null for brand-mention>",
   "phase": "research",
   "tone_override": null,
-  "parent_project": null,
+  "source_material": "<filename if user provided existing material, else null>",
+  "idea_context": "<path to idea_handoff JSON from /idea, or null>",
   "brand_brief": null,
   "created": "<YYYY-MM-DD>",
   "updated": "<YYYY-MM-DD>"
@@ -144,15 +144,20 @@ in `directives/research/topic.md`.
 
 ### Verify Sources
 
-Before presenting the brief to the user, verify that every cited source actually
-supports the claim attributed to it. This catches misattribution, hallucinated
+Before presenting the brief to the user, verify that cited web sources actually
+support the claims attributed to them. This catches misattribution, hallucinated
 content, and summarization errors.
+
+**Skip YouTube transcript sources**: Citations from YouTube videos whose transcripts
+were fetched via `fetch_transcript.py` do NOT need re-verification — the transcript
+was already read directly. Only verify non-YouTube web sources (articles, reports,
+blog posts, etc.).
 
 **IMPORTANT — Parallel execution**: All source verifications are independent —
 fire off **all** `WebFetch` re-checks in a **single message** so they run
 concurrently. Do NOT verify sources one by one sequentially.
 
-For each `[Source Name](URL)` citation in the brief:
+For each non-YouTube `[Source Name](URL)` citation in the brief:
 
 1. **Re-fetch the URL** using `WebFetch` and ask: "Does this page contain information
    about [the specific claim]?"
@@ -197,7 +202,8 @@ with the rest of the document.
 ### Initial Outline
 
 If a `brief.md` exists, read `workspace/temp/research/<PROJECT>/brief.md` to refresh context.
-(For short-form projects that skipped research, work from the user's stated topic/angle.)
+If a `source_material.md` exists (short-form with existing material), read it as the content source.
+(For short-form projects that skipped research with no source material, work from the user's stated topic/angle.)
 
 **Long-form outline** — propose a multi-section structure. Consider:
 - What's the strongest hook? (Most surprising finding, most relatable problem)
@@ -280,6 +286,10 @@ format (long-form or short-form), the output format rules from
 should return the full script text; write it to
 `workspace/output/research/<PROJECT>/script.md`.
 
+**Hard formatting rule — include in subagent prompt**: Do NOT use em dashes (—) anywhere
+in the script. Scripts are spoken aloud, not read. Use periods, commas, or line breaks
+instead. This is a non-negotiable constraint.
+
 If filtered hooks are available, also pass them to the subagent with this instruction:
 > **Hook reference**: Here are proven hooks from top-performing videos in this niche,
 > filtered to hooks relevant to the current topic. Use these as inspiration for
@@ -307,6 +317,19 @@ the `brand_brief` from `state.json`, the outline, the tone profile, and these in
   (all items checked or unchecked based on whether the script covers them)
 
 Write output to `workspace/output/research/<PROJECT>/script.md`.
+
+### Source URL Verification (After Every Draft)
+
+After writing the script (initial draft or any revision that adds/changes sources),
+verify every `[Source: ...]()` URL in the script before presenting it to the user:
+
+1. Extract all source URLs from the script
+2. Fetch each URL to confirm it returns 200 (not 404, redirect to homepage, etc.)
+3. For any broken URL, search the web for the correct link to the same data/report
+4. Fix broken URLs in `script.md` before presenting the draft
+
+**Why**: Subagents hallucinate URLs. The brief may contain correct URLs, but the
+subagent may mangle them or invent new ones. Always verify after writing.
 
 ### Requirements Validation (Brand-Mention Only)
 
@@ -354,8 +377,9 @@ Requirements check:
 
 **Delegation for rewrites**: For any action that involves writing or rewriting
 script text, spawn a subagent with the current `script.md` content, the relevant
-section of `brief.md` (if needed for accuracy), the tone profile, and specific instructions
-for what to change. Apply the returned text to `script.md`.
+section of `brief.md` (if needed for accuracy), the tone profile, the formatting
+rules from `directives/research/topic.md` (including the em dash ban), and specific
+instructions for what to change. Apply the returned text to `script.md`.
 
 **Do NOT suggest moving to the next phase.** Wait for the user to explicitly say so.
 
@@ -480,79 +504,6 @@ When the user says "script done":
 
    Temp files in workspace/temp/research/<PROJECT>/ can be safely deleted.
    ```
-
----
-
-## Spin-Off Reels
-
-This flow is triggered when the user chooses "spin-off reels from an existing project"
-in Step 1. It reuses a long-form project's research and produces short-form reel scripts.
-
-### Step A — Select Parent Project
-
-List completed or in-progress long-form projects:
-
-```bash
-ls workspace/temp/research/ 2>/dev/null
-```
-
-Read each project's `state.json`. Only show projects where `format` is `"long-form"`.
-Ask the user which project to spin off from.
-
-### Step B — Create Spin-Off Project
-
-Create a new project directory with a slug like `<parent-slug>-reels`:
-
-```bash
-mkdir -p "workspace/temp/research/<parent-slug>-reels"
-mkdir -p "workspace/output/research/<parent-slug>-reels"
-```
-
-Write `state.json`:
-```json
-{
-  "topic": "Reels from: <parent topic>",
-  "slug": "<parent-slug>-reels",
-  "format": "short-form",
-  "mode": "<inherited from parent>",
-  "phase": "outline",
-  "tone_override": null,
-  "parent_project": "<parent-slug>",
-  "created": "<YYYY-MM-DD>",
-  "updated": "<YYYY-MM-DD>"
-}
-```
-
-### Step C — Read Parent Research
-
-Read the parent project's `workspace/temp/research/<parent-slug>/brief.md`.
-
-Suggest 2–4 potential reel angles extracted from the research. Each angle should be
-a single, self-contained insight that works as a standalone short-form video.
-
-Present the suggestions and ask the user which angles to develop (they can pick
-multiple or suggest their own).
-
-### Step D — Outline and Script Each Reel (Iterative)
-
-For each selected angle, go through the short-form outline → script flow:
-
-1. Write outline to `workspace/temp/research/<parent-slug>-reels/reel-<N>-outline.md`
-2. Present to user → iterate until approved
-3. Write script to `workspace/output/research/<parent-slug>-reels/reel-<N>.md`
-4. Present to user → iterate until approved
-5. Move to next reel
-
-The user can also request additional reels at any point during this process.
-
-When all reels are done, the user says "reels done":
-
-1. Update `state.json` phase to `"complete"`
-2. Ask the user: "Would you like to export the reel scripts to Google Docs?"
-   - If yes: run `export_google_doc.py` for each `reel-<N>.md` file with title
-     `"Reel <N>: <topic>"`. Collect all doc URLs.
-   - If no: proceed to step 3.
-3. Report the list of reel scripts produced (include Google Doc URLs if exported).
 
 ---
 

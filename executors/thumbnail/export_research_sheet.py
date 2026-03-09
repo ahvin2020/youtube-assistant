@@ -9,7 +9,6 @@ Usage:
     python3 executors/thumbnail/export_research_sheet.py \
         --input workspace/temp/thumbnail/<PROJECT>/research/cross_niche/metadata.json \
         --tab-name 20260304_cpf-ers-vs-investing \
-        [--analysis workspace/temp/thumbnail/<PROJECT>/research/cross_niche/analysis.json] \
         [--credentials credentials.json] \
         [--sheet-config workspace/config/research_sheet.json]
 
@@ -20,7 +19,6 @@ Arguments:
     --tab-name NAME       Tab/sheet name (e.g. YYYYMMDD_slug)
 
 Options:
-    --analysis PATH       Path to analysis.json (title variants)
     --credentials PATH    Path to OAuth credentials.json (default: ./credentials.json)
     --sheet-config PATH   Path to store/read spreadsheet ID for reuse
                           (default: ./workspace/config/research_sheet.json)
@@ -56,8 +54,6 @@ from shared.google_sheets import (
 
 SPREADSHEET_TITLE = "YouTube Thumbnail Research"
 
-MAX_TRANSCRIPT_CHARS = 4000
-
 
 # ── Category classification ────────────────────────────────────────────────
 
@@ -92,8 +88,8 @@ def categorize(title: str) -> str:
 
 # ── Row building ───────────────────────────────────────────────────────────
 
-def build_rows(videos: list[dict], analysis: dict[str, dict]) -> list[list]:
-    """Build header + data rows for the 19-column spreadsheet layout."""
+def build_rows(videos: list[dict]) -> list[list]:
+    """Build header + data rows for the spreadsheet layout."""
     header = [
         "Thumbnail",                # 1
         "Thumbnail URL",            # 2
@@ -107,12 +103,8 @@ def build_rows(videos: list[dict], analysis: dict[str, dict]) -> list[list]:
         "Channel Name",             # 10
         "Channel Avg Views",        # 11
         "Category",                 # 12
-        "Title Variant 1",          # 13
-        "Title Variant 2",          # 14
-        "Title Variant 3",          # 15
-        "Raw Transcript",           # 16
-        "Publish Date",             # 17
-        "Source",                   # 18
+        "Publish Date",             # 13
+        "Source",                   # 14
     ]
     rows = [header]
 
@@ -127,28 +119,16 @@ def build_rows(videos: list[dict], analysis: dict[str, dict]) -> list[list]:
 
         # Source detail
         source = vid.get("_source", "")
-        if source == "keyword":
+        if source == "curated":
+            source_detail = "channel: {}".format(vid.get("_source_channel", vid.get("channel", "")))
+        elif source == "keyword":
             source_detail = "keyword: {}".format(vid.get("_search_keyword", ""))
         elif source == "channel":
             source_detail = "channel: {}".format(vid.get("_source_channel", vid.get("channel", "")))
         else:
             source_detail = source
 
-        # Raw transcript (first 4000 chars)
-        transcript_text = ""
-        transcript_path = vid.get("transcript_path")
-        if transcript_path and os.path.isfile(transcript_path):
-            try:
-                with open(transcript_path) as f:
-                    transcript_text = f.read()[:MAX_TRANSCRIPT_CHARS]
-            except Exception:
-                pass
-
-        # Analysis data (title variants)
-        vid_analysis = analysis.get(video_id, {})
-
-        # Category: from analysis if available, else auto-classify
-        category = vid_analysis.get("category") or categorize(vid.get("title", ""))
+        category = categorize(vid.get("title", ""))
 
         row = [
             '=IMAGE("{}")'.format(thumb_url),
@@ -163,10 +143,6 @@ def build_rows(videos: list[dict], analysis: dict[str, dict]) -> list[list]:
             vid.get("channel", ""),
             vid.get("channel_average_views", ""),
             category,
-            vid_analysis.get("title_variant_1", ""),
-            vid_analysis.get("title_variant_2", ""),
-            vid_analysis.get("title_variant_3", ""),
-            transcript_text,
             vid.get("upload_date", ""),
             source_detail,
         ]
@@ -205,18 +181,17 @@ def apply_formatting(service, spreadsheet_id: str, tab_id: int,
                 "fields": "pixelSize",
             }
         },
-        # Column widths (18 columns):
+        # Column widths (14 columns):
         # Thumbnail (180), Thumbnail URL (200), Title (350),
         # Final Score (90), Outlier Score (80), Days Old (70),
         # Video Link (280), View Count (90), Duration (70),
         # Channel Name (150), Channel Avg Views (100), Category (100),
-        # Title Variant 1-3 (250 each), Raw Transcript (400),
         # Publish Date (100), Source (200)
     ]
 
     col_widths = [
         180, 200, 350, 90, 80, 70, 280, 90, 70,
-        150, 100, 100, 250, 250, 250, 400, 100, 200,
+        150, 100, 100, 100, 200,
     ]
     for idx, width in enumerate(col_widths):
         requests.append({
@@ -252,26 +227,6 @@ def apply_formatting(service, spreadsheet_id: str, tab_id: int,
         }
     })
 
-    # Text wrapping for Title Variants (12-14), Raw Transcript (15)
-    for col_idx in [12, 13, 14, 15]:
-        requests.append({
-            "repeatCell": {
-                "range": {
-                    "sheetId": tab_id,
-                    "startRowIndex": 1,
-                    "endRowIndex": num_rows,
-                    "startColumnIndex": col_idx,
-                    "endColumnIndex": col_idx + 1,
-                },
-                "cell": {
-                    "userEnteredFormat": {
-                        "wrapStrategy": "WRAP",
-                    }
-                },
-                "fields": "userEnteredFormat.wrapStrategy",
-            }
-        })
-
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"requests": requests},
@@ -286,8 +241,6 @@ def main():
                         help="Path to metadata.json (scored research results)")
     parser.add_argument("--tab-name", required=True,
                         help="Tab/sheet name (e.g. 20260304_cpf-ers-vs-investing)")
-    parser.add_argument("--analysis", default=None,
-                        help="Path to analysis.json (AI summaries + title variants)")
     parser.add_argument("--credentials",
                         default=os.path.join(os.getcwd(), "credentials.json"),
                         help="Path to OAuth credentials.json (default: ./credentials.json)")
@@ -309,13 +262,6 @@ def main():
 
     if not isinstance(videos, list) or len(videos) == 0:
         fail("Input JSON must be a non-empty array of video objects.")
-
-    # Load analysis data if provided
-    analysis = {}
-    if args.analysis and os.path.isfile(args.analysis):
-        with open(args.analysis) as f:
-            analysis_list = json.load(f)
-        analysis = {a["video_id"]: a for a in analysis_list}
 
     # Authenticate
     creds = authenticate(args.credentials)
@@ -344,7 +290,7 @@ def main():
         tab_id = add_tab(service, spreadsheet_id, args.tab_name)
 
     # Build and write rows
-    rows = build_rows(videos, analysis)
+    rows = build_rows(videos)
 
     range_name = f"'{args.tab_name}'!A1"
     service.spreadsheets().values().update(

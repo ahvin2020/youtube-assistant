@@ -108,15 +108,32 @@ succeeded out of how many attempted.
 
 ## Step 3 — Performance Analysis (Sonnet Subagent)
 
-Read `channel_data.json` and trim to reduce token cost:
-- Own-channel: top 30 videos (keep only: title, channel, views, outlier_score,
-  engagement_rate, upload_date, duration, days_since_upload, is_own_channel)
-- Competitor: top 30 videos by outlier_score (same fields)
-- Monthly trends from own-channel data
+Read `channel_data.json` and trim to reduce token cost, then convert to **TSV**
+(~50% fewer tokens than nested JSON for tabular data):
+
+```python
+import json, csv, io
+
+def json_to_tsv(records: list[dict], columns: list[str]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter='\t', lineterminator='\n')
+    writer.writerow(columns)
+    for r in records:
+        writer.writerow([r.get(c, '') for c in columns])
+    return buf.getvalue()
+```
+
+- Own-channel: top 30 videos → TSV with columns:
+  `title`, `views`, `outlier_score`, `engagement_rate`, `upload_date`, `duration`, `days_since_upload`
+- Competitor: top 30 videos by outlier_score → TSV with columns:
+  `title`, `channel`, `views`, `outlier_score`, `engagement_rate`, `upload_date`, `duration`
+- Monthly trends from own-channel data (pass as-is — small, nested)
+
+Pass TSV strings directly in the subagent prompt — do NOT write intermediate files.
 
 Spawn a subagent (**no model override** — inherits Sonnet).
 
-Pass the subagent the trimmed data and channel profile.
+Pass the subagent the TSV data and channel profile.
 
 > You are a content performance analyst. Analyze own-channel vs competitor data.
 >
@@ -156,12 +173,12 @@ This is the high-judgment step. Spawn a subagent with **model: "opus"**.
 
 ### Prepare input data
 
-1. **Title hooks**: Top 20 video titles (from `channel_data.json`, sorted by outlier_score).
-   Include: title, channel, views, outlier_score, engagement_rate.
+1. **Title hooks**: Top 20 video titles (from `channel_data.json`, sorted by outlier_score)
+   → convert to **TSV** with columns: `title`, `channel`, `views`, `outlier_score`, `engagement_rate`.
 
 2. **Opening hooks**: For each video with a fetched transcript, extract the
-   first 30 seconds of text from the segments. Include: video_id, title,
-   channel, opening_text, opening_seconds.
+   first 30 seconds of text from the segments → convert to **TSV** with columns:
+   `video_id`, `title`, `channel`, `opening_text`, `opening_seconds`.
 
 3. **Existing categories**: The `hook_categories` from `workspace/config/research_config.json`.
 

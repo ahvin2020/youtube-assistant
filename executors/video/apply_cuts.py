@@ -83,7 +83,7 @@ MERGE_GAP_THRESHOLD = 0.05
 # Set higher than MERGE_GAP_THRESHOLD — this catches *meaningful* gaps that
 # are still too short to be intentional removed content (retakes are typically
 # several seconds long).
-MIN_INTER_SEGMENT_GAP = 1.0
+MIN_INTER_SEGMENT_GAP = 0.15
 
 
 def merge_adjacent_segments(segments: list, threshold: float = MERGE_GAP_THRESHOLD) -> list:

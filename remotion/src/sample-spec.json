@@ -1,0 +1,247 @@
+{
+  "version": "1.0",
+  "source_video": "",
+  "fps": 30,
+  "duration_seconds": 120,
+  "width": 1920,
+  "height": 1080,
+  "global_style": {
+    "font_family": "Inter, system-ui, sans-serif",
+    "accent_color": "#FF6B35",
+    "secondary_color": "#1A1A2E",
+    "text_color": "#FFFFFF",
+    "background_opacity": 0.85
+  },
+  "sections": [
+    {
+      "id": "section_1",
+      "label": "Hook — Market crash context",
+      "start_seconds": 0.0,
+      "end_seconds": 15.0,
+      "script_text": "So recently the S&P 500 dropped 3% in a single day..."
+    },
+    {
+      "id": "section_2",
+      "label": "Part 1 — What happened",
+      "start_seconds": 15.0,
+      "end_seconds": 60.0,
+      "script_text": "Let me break down what actually caused this crash..."
+    },
+    {
+      "id": "section_3",
+      "label": "Part 2 — CPF vs SRS comparison",
+      "start_seconds": 60.0,
+      "end_seconds": 100.0,
+      "script_text": "Now let's compare CPF OA returns versus SRS..."
+    },
+    {
+      "id": "section_4",
+      "label": "Conclusion — Key takeaway",
+      "start_seconds": 100.0,
+      "end_seconds": 120.0,
+      "script_text": "So the key takeaway here is..."
+    }
+  ],
+  "enhancements": [
+    {
+      "id": "enh_001",
+      "type": "lower_third",
+      "section_id": "section_1",
+      "start_seconds": 0.5,
+      "end_seconds": 5.0,
+      "content": {
+        "name": "Kelvin",
+        "title": "Kelvin Learns Investing",
+        "position": "bottom_left",
+        "animation_in": "slide_up",
+        "animation_out": "slide_down"
+      }
+    },
+    {
+      "id": "enh_002",
+      "type": "text_overlay",
+      "section_id": "section_1",
+      "start_seconds": 2.0,
+      "end_seconds": 6.0,
+      "content": {
+        "text": "S&P 500: -3%",
+        "style": "kinetic_pop",
+        "position": { "x": "center", "y": "bottom_third" },
+        "font_size": 64,
+        "color": "#FF4444",
+        "animation_in": "scale_bounce",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_003",
+      "type": "zoom_effect",
+      "section_id": "section_1",
+      "start_seconds": 0.0,
+      "end_seconds": 4.0,
+      "content": {
+        "zoom_type": "push_in",
+        "from_scale": 1.0,
+        "to_scale": 1.1,
+        "focal_point": { "x": "center", "y": "center" },
+        "easing": "ease_out"
+      }
+    },
+    {
+      "id": "enh_004",
+      "type": "sound_effect",
+      "section_id": "section_1",
+      "start_seconds": 2.0,
+      "end_seconds": 2.5,
+      "content": {
+        "sfx_id": "impact",
+        "volume": 0.5
+      }
+    },
+    {
+      "id": "enh_005",
+      "type": "section_divider",
+      "section_id": "section_2",
+      "start_seconds": 15.0,
+      "end_seconds": 17.5,
+      "content": {
+        "label": "What Happened",
+        "number": 1,
+        "total_sections": 3,
+        "style": "minimal_bar",
+        "position": "full_width_center"
+      }
+    },
+    {
+      "id": "enh_006",
+      "type": "icon_accent",
+      "section_id": "section_1",
+      "start_seconds": 2.0,
+      "end_seconds": 4.0,
+      "content": {
+        "icon": "chart_down",
+        "position": { "x": 150, "y": 300 },
+        "size": 48,
+        "animation": "bounce_in",
+        "color": "#FF4444"
+      }
+    },
+    {
+      "id": "enh_007",
+      "type": "animated_list",
+      "section_id": "section_2",
+      "start_seconds": 22.0,
+      "end_seconds": 32.0,
+      "content": {
+        "items": [
+          { "text": "Tariff announcements", "icon": "📢" },
+          { "text": "Tech sector selloff", "icon": "💻" },
+          { "text": "Bond yield inversion", "icon": "📉" },
+          { "text": "Retail panic selling", "icon": "😱" }
+        ],
+        "reveal_style": "sequential",
+        "stagger_frames": 15,
+        "position": { "x": "right", "y": "center" },
+        "animation_in": "slide_right",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_008",
+      "type": "data_viz",
+      "section_id": "section_3",
+      "start_seconds": 65.0,
+      "end_seconds": 78.0,
+      "content": {
+        "chart_type": "comparison",
+        "title": "CPF OA vs SRS Returns",
+        "data": [
+          { "label": "CPF OA", "value": 2.5, "color": "#4CAF50", "description": "%" },
+          { "label": "SRS", "value": 4.2, "color": "#2196F3", "description": "%" }
+        ],
+        "position": { "x": "right", "y": "center" },
+        "scale": 0.8,
+        "animation_in": "build_up",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_009",
+      "type": "number_counter",
+      "section_id": "section_3",
+      "start_seconds": 80.0,
+      "end_seconds": 88.0,
+      "content": {
+        "from": 0,
+        "to": 50000,
+        "prefix": "$",
+        "suffix": "",
+        "position": { "x": "center", "y": "center" },
+        "font_size": 72,
+        "color": "#4CAF50",
+        "animation_in": "fade",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_010",
+      "type": "split_screen",
+      "section_id": "section_3",
+      "start_seconds": 90.0,
+      "end_seconds": 98.0,
+      "content": {
+        "left": { "label": "CPF OA", "value": "2.5%", "color": "rgba(76, 175, 80, 0.8)" },
+        "right": { "label": "SRS", "value": "4.2%", "color": "rgba(33, 150, 243, 0.8)" },
+        "divider_style": "vs",
+        "animation_in": "slide_left",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_011",
+      "type": "callout_box",
+      "section_id": "section_4",
+      "start_seconds": 105.0,
+      "end_seconds": 115.0,
+      "content": {
+        "text": "Don't panic sell during market dips — historically, the market always recovers.",
+        "style": "insight",
+        "position": { "x": "center", "y": "bottom_third" },
+        "animation_in": "slide_up",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_012",
+      "type": "progress_tracker",
+      "section_id": "section_3",
+      "start_seconds": 60.0,
+      "end_seconds": 100.0,
+      "content": {
+        "steps": [
+          { "label": "Crash", "completed": true },
+          { "label": "Analysis", "completed": true },
+          { "label": "Compare" },
+          { "label": "Action" }
+        ],
+        "current_step": 3,
+        "style": "dots",
+        "position": { "x": "center", "y": "top" },
+        "animation_in": "fade",
+        "animation_out": "fade"
+      }
+    },
+    {
+      "id": "enh_013",
+      "type": "transition",
+      "section_id": "section_2",
+      "start_seconds": 14.5,
+      "end_seconds": 15.5,
+      "content": {
+        "transition_type": "whip",
+        "direction": "right",
+        "speed": "fast"
+      }
+    }
+  ]
+}

@@ -34,22 +34,26 @@ import io
 import os
 import sys
 import time
-from datetime import date
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
-USAGE_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "workspace", "temp", "thumbnail", "usage.json"
-)
+
+_EXECUTORS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EXECUTORS_DIR not in sys.path:
+    sys.path.insert(0, _EXECUTORS_DIR)
+from shared.gemini_usage import load_usage, update_usage
 
 BASE_PROMPT_SINGLE = (
     "The first image is a scene/layout reference. The second image is a reference "
     "photo of a person called Subject Alpha. Generate a high-quality YouTube "
     "thumbnail of Subject Alpha in a scene inspired by the first image. "
-    "Maintain strict facial and physical consistency with the provided reference "
-    "photo of Subject Alpha — same face, same build, same hair, same glasses "
-    "(if any), same skin tone. Match the composition, background style, colors, "
-    "lighting, and overall layout of the first image. Subject Alpha should adopt "
-    "a similar pose and position in the frame as the person in the first image. "
+    "Maintain EXACT facial identity of Subject Alpha — the face must be "
+    "photographically identical to the reference photo. Same face structure, "
+    "same features, same skin tone, same build, same hair, same glasses (if any). "
+    "Do NOT alter, stylize, or reinterpret any facial features. "
+    "Match the composition, pose, position, and overall layout of the first image. "
+    "You have full creative freedom over color grading, brightness, contrast, "
+    "saturation, lighting direction, and overall color palette — adjust these "
+    "freely to create the most visually striking thumbnail. "
     "Do NOT include any text, letters, or words in the generated image. "
     "Do NOT include any watermarks."
 )
@@ -58,14 +62,17 @@ BASE_PROMPT_MULTI = (
     "The first image is a scene/layout reference. The remaining images are all "
     "reference photos of the same person called Subject Alpha, showing them from "
     "different angles and expressions. Study all of the reference photos carefully "
-    "to understand Subject Alpha's face, build, hair, glasses, and skin tone. "
+    "to understand Subject Alpha's exact facial identity. "
     "Generate a high-quality YouTube thumbnail of Subject Alpha in a scene "
-    "inspired by the first image. Maintain strict facial and physical consistency "
-    "with the provided reference photos of Subject Alpha — same face, same build, "
-    "same hair, same glasses (if any), same skin tone. Match the composition, "
-    "background style, colors, lighting, and overall layout of the first image. "
-    "Subject Alpha should adopt a similar pose and position in the frame as the "
-    "person in the first image. "
+    "inspired by the first image. "
+    "Maintain EXACT facial identity of Subject Alpha — the face must be "
+    "photographically identical to the reference photos. Same face structure, "
+    "same features, same skin tone, same build, same hair, same glasses (if any). "
+    "Do NOT alter, stylize, or reinterpret any facial features. "
+    "Match the composition, pose, position, and overall layout of the first image. "
+    "You have full creative freedom over color grading, brightness, contrast, "
+    "saturation, lighting direction, and overall color palette — adjust these "
+    "freely to create the most visually striking thumbnail. "
     "Do NOT include any text, letters, or words in the generated image. "
     "Do NOT include any watermarks."
 )
@@ -109,26 +116,6 @@ def load_api_key() -> str:
     )
 
 
-def load_usage_tracker() -> dict:
-    """Load today's usage from workspace/temp/thumbnail/usage.json."""
-    if not os.path.isfile(USAGE_FILE):
-        return {"date": str(date.today()), "images_generated": 0}
-    with open(USAGE_FILE) as f:
-        data = json.load(f)
-    if data.get("date") != str(date.today()):
-        return {"date": str(date.today()), "images_generated": 0}
-    return data
-
-
-def update_usage_tracker() -> None:
-    """Increment today's image count in usage.json."""
-    usage = load_usage_tracker()
-    usage["images_generated"] = usage.get("images_generated", 0) + 1
-    usage["date"] = str(date.today())
-    os.makedirs(os.path.dirname(USAGE_FILE) or ".", exist_ok=True)
-    with open(USAGE_FILE, "w") as f:
-        json.dump(usage, f, indent=2)
-
 
 def color_match(reference_img, generated_img):
     """Adjust generated image brightness and contrast to match the reference.
@@ -171,6 +158,7 @@ def replace_face(
     extra_prompt: str | None,
     full_prompt: str | None = None,
     model: str = DEFAULT_MODEL,
+    asset_paths: list[str] | None = None,
 ) -> bytes:
     """Call Gemini API with character consistency to generate thumbnail.
 
@@ -191,22 +179,39 @@ def replace_face(
     # Load images
     reference_img = Image.open(reference_path).convert("RGB")
     headshot_imgs = [Image.open(p).convert("RGB") for p in headshot_paths]
+    asset_imgs = [Image.open(p).convert("RGBA") for p in (asset_paths or [])]
 
     # Build prompt: --full-prompt replaces BASE_PROMPT entirely
     if full_prompt:
         prompt = full_prompt
     else:
-        if len(headshot_imgs) > 1:
-            prompt = BASE_PROMPT_MULTI
-        else:
-            prompt = BASE_PROMPT_SINGLE
+        prompt = BASE_PROMPT_MULTI if len(headshot_imgs) > 1 else BASE_PROMPT_SINGLE
         if extra_prompt:
             prompt += f" Additional instructions: {extra_prompt}"
+
+    # Asset preservation instructions
+    if asset_imgs:
+        n_headshots = len(headshot_imgs)
+        asset_start = n_headshots + 2  # 1-indexed: 1=reference, 2..N=headshots, then assets
+        asset_labels = []
+        for i in range(len(asset_imgs)):
+            label = f"image {asset_start + i}"
+            asset_labels.append(label)
+        labels_str = ", ".join(asset_labels)
+        prompt += (
+            f" The following additional images ({labels_str}) are asset references "
+            f"(logos, screenshots, icons, or graphics). You MUST include each asset "
+            f"in the generated thumbnail EXACTLY as provided — preserve every detail: "
+            f"exact colors, exact shapes, exact proportions, exact text/lettering, "
+            f"exact transparency. Do NOT redraw, reinterpret, simplify, or stylize "
+            f"these assets in any way. Place them naturally within the composition."
+        )
+
     prompt += f" Image dimensions: {width}x{height} pixels, 16:9 aspect ratio."
 
     # Send multi-image request to Gemini
-    # Image order: reference (scene/layout), then headshot(s) (character identity)
-    contents: list = [prompt, reference_img] + headshot_imgs
+    # Image order: reference (scene/layout), then headshot(s) (character identity), then assets
+    contents: list = [prompt, reference_img] + headshot_imgs + asset_imgs
     response = client.models.generate_content(
         model=model,
         contents=contents,
@@ -237,6 +242,8 @@ def main():
                         help="Path to the primary character reference (headshot) image")
     parser.add_argument("--extra-headshots", nargs="*", default=[],
                         help="Additional headshot reference images (different angles/expressions)")
+    parser.add_argument("--assets", nargs="*", default=[],
+                        help="Asset images (logos, screenshots, icons) to include exactly as-is")
     parser.add_argument("--output", required=True,
                         help="Output file path (PNG)")
     parser.add_argument("--prompt", default=None,
@@ -284,12 +291,22 @@ def main():
             }))
             sys.exit(1)
 
+    # Validate asset files
+    for asset in (args.assets or []):
+        if not os.path.isfile(asset):
+            print(json.dumps({
+                "status": "error",
+                "error": f"Asset image not found: {asset}",
+            }))
+            sys.exit(1)
+
     # Generate image with character consistency
     try:
         image_bytes = replace_face(
             args.reference, all_headshots,
             args.width, args.height,
             args.prompt, args.full_prompt, args.model,
+            args.assets or None,
         )
     except EnvironmentError as e:
         print(json.dumps({"status": "error", "error": str(e)}))
@@ -317,11 +334,10 @@ def main():
     img.save(args.output, "PNG")
 
     # Update daily usage tracker
-    update_usage_tracker()
+    usage = update_usage()
 
     elapsed = round(time.time() - start, 2)
     file_size = os.path.getsize(args.output)
-    usage = load_usage_tracker()
 
     print(json.dumps({
         "status": "success",
@@ -329,6 +345,8 @@ def main():
         "reference_file": os.path.abspath(args.reference),
         "headshot_files": [os.path.abspath(hs) for hs in all_headshots],
         "headshot_count": len(all_headshots),
+        "asset_files": [os.path.abspath(a) for a in (args.assets or [])],
+        "asset_count": len(args.assets or []),
         "dimensions": f"{args.width}x{args.height}",
         "provider": "gemini",
         "model": args.model,

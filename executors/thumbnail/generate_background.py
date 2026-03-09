@@ -21,12 +21,13 @@ import io
 import os
 import sys
 import time
-from datetime import date
 
 DEFAULT_MODEL = "gemini-3.1-flash-image-preview"
-USAGE_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "workspace", "temp", "thumbnail", "usage.json"
-)
+
+_EXECUTORS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _EXECUTORS_DIR not in sys.path:
+    sys.path.insert(0, _EXECUTORS_DIR)
+from shared.gemini_usage import load_usage, update_usage
 
 
 def check_dependencies():
@@ -71,26 +72,6 @@ def load_api_key() -> str:
         "Get a key at https://aistudio.google.com/apikey"
     )
 
-
-def load_usage_tracker() -> dict:
-    """Load today's usage from workspace/temp/thumbnail/usage.json."""
-    if not os.path.isfile(USAGE_FILE):
-        return {"date": str(date.today()), "images_generated": 0}
-    with open(USAGE_FILE) as f:
-        data = json.load(f)
-    if data.get("date") != str(date.today()):
-        return {"date": str(date.today()), "images_generated": 0}
-    return data
-
-
-def update_usage_tracker() -> None:
-    """Increment today's image count in usage.json."""
-    usage = load_usage_tracker()
-    usage["images_generated"] = usage.get("images_generated", 0) + 1
-    usage["date"] = str(date.today())
-    os.makedirs(os.path.dirname(USAGE_FILE) or ".", exist_ok=True)
-    with open(USAGE_FILE, "w") as f:
-        json.dump(usage, f, indent=2)
 
 
 def generate_image(prompt: str, width: int, height: int, negative_prompt: str | None, model: str = DEFAULT_MODEL) -> bytes:
@@ -178,11 +159,10 @@ def main():
     img.save(args.output, "PNG")
 
     # Update daily usage tracker
-    update_usage_tracker()
+    usage = update_usage()
 
     elapsed = round(time.time() - start, 2)
     file_size = os.path.getsize(args.output)
-    usage = load_usage_tracker()
 
     print(json.dumps({
         "status": "success",
